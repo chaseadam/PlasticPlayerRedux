@@ -1,0 +1,9 @@
+[submodule "micropython-ndeflib"]
+	path = micropython-ndeflib
+	url = https://github.com/agama-point/micropython-ndeflib.git
+[submodule "Adafruit_CircuitPython_PN532"]
+	path = Adafruit_CircuitPython_PN532
+	url = https://github.com/chaseadam/Adafruit_CircuitPython_PN532.git
+[submodule "micropython-spotify-web-api"]
+	path = micropython-spotify-web-api
+	url = https://github.com/chaseadam/micropython-spotify-web-api
