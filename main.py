@@ -50,6 +50,7 @@ def getRecord(uid):
         getDB()
     return db[uid]
 
+# TODO make a library out of this, probably compatible with `with ... as` pattern?
 def getNDEFMessageTLV():
     # assuming last block is 0x2B
     # start at block 0x04 because that is where data starts
@@ -195,20 +196,19 @@ def run():
         try:
             # TODO add lookup from UID to URI
             # Plastic Player JSON indicates an array of 7 byte values
+            # TODO try using `with ... as` pattern to help with memory?
             ndef_message_bytes = getNDEFMessageTLV()
             # Check message contents are not empty. If empty, failed to read or no message found
             while ndef_message_bytes:
                 tag_uri = getNDEFspotify(ndef_message_bytes)
                 if tag_uri:
+                    # TODO switch to only passing around URI
                     record = {'uri': tag_uri, 'note': 'uri from tag'}
                     break
             else:
                 record = getRecord(str([x for x in uid] ))
             # memory allocation errors if we don't collect here
             gc.collect()
-            # check if already playing
-            #tag_uri = 'spotify:track:5Ne1q9Hv3l2NHBA3Agt8WT'
-            #record = {'uri': tag_uri, 'note': 'uri from tag'}
 
             # WARNING: esp32 specific and probably doesn't help with speed of TLS setup?
             if playing_end is None:
