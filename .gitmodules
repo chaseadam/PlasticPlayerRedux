@@ -7,3 +7,6 @@
 [submodule "micropython-spotify-web-api"]
 	path = micropython-spotify-web-api
 	url = https://github.com/chaseadam/micropython-spotify-web-api
+[submodule "python_lcd"]
+	path = python_lcd
+	url = https://github.com/dhylands/python_lcd.git

@@ -11,6 +11,8 @@ from micropython import const #, mem_info
 
 import ndef
 
+from esp32_gpio_lcd import GpioLcd
+
 # for ESP32
 vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
@@ -25,6 +27,14 @@ pn532.SAM_configuration()
 db = {}
 playing_end = None
 playing_uri = None
+
+lcd = GpioLcd(rs_pin=Pin(4),
+              enable_pin=Pin(17),
+              d4_pin=Pin(0),
+              d5_pin=Pin(16),
+              d6_pin=Pin(21),
+              d7_pin=Pin(22),
+              num_lines=2, num_columns=16)
 
 def getDB():
     # TODO load from external source
@@ -133,6 +143,7 @@ def syncPlayerStatus(client):
     # .context.uri (.context only present if used a context_uri to start playing)
     global playing_end
     global playing_uri
+    global lcd
     resp = client.player()
     # TODO add handling of "not playing" status because we are likely to run into this state often? (set timeout via end_time?)
     print("checking player payload")
@@ -147,6 +158,8 @@ def syncPlayerStatus(client):
                 # there is no way to know where we are in a context so set to end of current track to check "is_playing" value again
             else:
                 playing_uri = resp['item']['uri']
+            lcd.clear()
+            lcd.putstr(resp['item']['name'])
             # we have current position and duration, so we should be able to "save" current playing
             # ticks_ms() should be fine as max ticks well in excess of 13 minutes (ticks_us() max value) https://forum.micropython.org/viewtopic.php?t=4652
             duration_ms = resp['item']['duration_ms']
@@ -155,16 +168,24 @@ def syncPlayerStatus(client):
             # TODO schedule clearing these values
             playing_end = time.ticks_add(time.ticks_ms(), remaining_ms)
 
-def run(button):
+def run():
     global playing_end
     global playing_uri
+    global lcd
+    lcd.clear()
+    lcd.putstr("Running")
     print("Running")
     spotify = spotify_client()
+    lcd.clear()
+    lcd.putstr("NFC Read")
+    lcd.blink_cursor_on()
     print("Waiting for RFID/NFC card...")
     while True:
         # Check if a card is available to read
         uid = pn532.read_passive_target(timeout=1)
         print(".", end="")
+        # experienced some column "drift" once when breadboarded, so maybe clear() ocassionally?
+        lcd.putstr(".")
         # Try again if no card is available.
         if uid is None:
             continue
@@ -193,6 +214,7 @@ def run(button):
             if playing_end is None:
                 syncPlayerStatus(spotify)
             if playing_uri == record['uri']:
+                # TODO use this logic in NFC read loop to update screen with playing track
                 playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
                 # this may not be exact, possibly add a gap or "resync"?
                 if playing_remaining > 0:
@@ -216,6 +238,13 @@ def run(button):
             # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
             playing_end = None
             print("Spotify `play` API call time: ", time.ticks_diff(time.ticks_ms(), ticks_start))
+            # screen updates when we sync, so sync now
+            # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
+            # TODO replace this sleep
+            time.sleep_ms(2000)
+            # making this call immediately causes memory allocation error. Possibly 
+            gc.collect()
+            syncPlayerStatus(spotify)
         # occasional timeouts with ECONNABORTED, and HOSTUNREACHABLE, probably shout reset if that happens
         except OSError as e:
             print('Error: {}, Reason: {}'.format(e, "null"))
@@ -225,9 +254,9 @@ def run(button):
             print('Tag not found in loaded DB')
 
 def main():
+    lcd.putstr("Starting up")
     print("\033c")
-    button = Pin(0, Pin.IN, Pin.PULL_UP)
-    run(button)
+    run()
 
 if __name__ == '__main__':
     main()
