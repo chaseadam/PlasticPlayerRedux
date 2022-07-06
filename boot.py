@@ -13,7 +13,8 @@ def do_connect():
     if not sta_if.isconnected():
         print('connecting to network...')
         sta_if.active(True)
-        sta_if.connect(rc.ssid,rc.password)
+        # TODO remove hard coded BSSID and figure out how to connect to the "strongest" signal
+        sta_if.connect(rc.ssid,rc.password, bssid=b"\xf4\xcf\xe2\xd7\x95\xa1")
         while not sta_if.isconnected():
             pass
     print('network config:', sta_if.ifconfig())
