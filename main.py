@@ -13,6 +13,8 @@ import ndef
 
 from esp32_gpio_lcd import GpioLcd
 
+import urequests as requests
+
 # for ESP32
 vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
@@ -37,13 +39,19 @@ lcd = GpioLcd(rs_pin=Pin(4),
               num_lines=2, num_columns=16)
 
 def getDB():
+    global db
     # TODO load from external source
     # i.e. "https://api.airtable.com/v0/appaHNgIJQBNzJHh4/Spotify?view=Grid%20view" -H "Authorization: Bearer XXXX"
     # TypeError: unsupported type for __hash__: 'bytearray'
     # TypeError: unsupported type for __hash__: 'list'
-    db[str('[29, 108, 52, 100, 100, 0, 0]')] = {"uri": "spotify:user:1212535283:playlist:1xBUIFb603EwKmVP9yyftT", "note": "foo"}
-    db[str('[29, 74, 48, 100, 100, 0, 0]')]      = {"uri": "spotify:user:joyc4mdg92a4lcwj91pqr4ig5:playlist:6zzNQ7MFvkSbSiC8PNwwK6", "note": "bar"}
-    db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
+    # Example entry
+    #db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
+    r = requests.get("xxx")
+    for record in r.json()['records']:
+        # WARNING: this reads the table into memory, could cause memory heap issues if too large
+        # TODO: we do not use the "note" field at the moment, just use playing title from spotify
+        db[str(record['fields']['tag'])] = {"uri": record['fields']['uri'], "note": record['fields']['note']}
+    r.close()
 
 def getRecord(uid):
     if not db:
@@ -56,7 +64,7 @@ def getNDEFMessageTLV():
     # start at block 0x04 because that is where data starts
     block_position = 4
     termination = False
-    tlv_NDEF_message_bytes = []
+    tlv_NDEF_message_bytes = bytearray()
     tlv_message_type = 0
     message_byte_count = 0
     while not termination:
@@ -113,9 +121,9 @@ def getNDEFMessageTLV():
         else:
             print("Read failed - did you remove the card?")
             # this will cause "IndexError: bytes index out of range" if passed to ndef
-            tlv_NDEF_message_bytes = []
+            tlv_NDEF_message_bytes = bytearray()
             break
-    return bytearray(tlv_NDEF_message_bytes)
+    return tlv_NDEF_message_bytes
 
 def getNDEFspotify(ndef_payload):
     ndef_value = None
@@ -189,6 +197,7 @@ def run():
         lcd.putstr(".")
         # Try again if no card is available.
         if uid is None:
+            gc.collect()
             continue
         #print("Found card with UID:", [hex(i) for i in uid])
         # output uid in format matching espruino library for input into PlasticPlayer JSON
@@ -197,23 +206,24 @@ def run():
             # TODO add lookup from UID to URI
             # Plastic Player JSON indicates an array of 7 byte values
             # TODO try using `with ... as` pattern to help with memory?
+            # good candidate for a generator?
             ndef_message_bytes = getNDEFMessageTLV()
             # Check message contents are not empty. If empty, failed to read or no message found
             while ndef_message_bytes:
                 tag_uri = getNDEFspotify(ndef_message_bytes)
                 if tag_uri:
-                    # TODO switch to only passing around URI
-                    record = {'uri': tag_uri, 'note': 'uri from tag'}
+                    uri = tag_uri
                     break
             else:
                 record = getRecord(str([x for x in uid] ))
+                uri = getRecord(str([x for x in uid] ))['uri']
             # memory allocation errors if we don't collect here
             gc.collect()
 
             # WARNING: esp32 specific and probably doesn't help with speed of TLS setup?
             if playing_end is None:
                 syncPlayerStatus(spotify)
-            if playing_uri == record['uri']:
+            if playing_uri == uri:
                 # TODO use this logic in NFC read loop to update screen with playing track
                 playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
                 # this may not be exact, possibly add a gap or "resync"?
@@ -226,14 +236,14 @@ def run():
             #else:
             #    print(playing_uri)
             #    print(record['uri'])
-            print("Play: ", record['uri'])
+            print("Play: ", uri)
             # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
             ticks_start = time.ticks_ms()
             # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
-            if 'track' in record['uri']:
-                spotify.play(uris=[record['uri']])
+            if 'track' in uri:
+                spotify.play(uris=[uri])
             else:
-                spotify.play(context_uri=record['uri'])
+                spotify.play(context_uri=uri)
             # clear end time to trigger syncPlayerStatus on next tag found if needed
             # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
             playing_end = None
