@@ -1,2 +1,9 @@
 ssid="<SSID>"
 password="<WPA2 PSK>"
+# apikey https://support.airtable.com/hc/en-us/articles/219046777
+# readonly apikey https://support.airtable.com/hc/en-us/articles/360056249614-Creating-a-read-only-API-key
+# api docs indicate submitting key as Bearer token, but it will also take it as a GET parameter
+airtable="https://api.airtable.com/v0/<projectId>/<table Id or Title>?api_key=<apiKey, preferably read-only>"
+# if you need to connect to specific access point (due to connecting to bad/far access point)
+#bssid=b"\xaa\xbb\xcc\xdd\xee\xff"
+bssid=None
