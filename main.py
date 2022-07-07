@@ -14,6 +14,7 @@ import ndef
 from esp32_gpio_lcd import GpioLcd
 
 import urequests as requests
+import replconf as rc
 
 # for ESP32
 vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
@@ -46,7 +47,7 @@ def getDB():
     # TypeError: unsupported type for __hash__: 'list'
     # Example entry
     #db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
-    r = requests.get("xxx")
+    r = requests.get(rc.airtable)
     for record in r.json()['records']:
         # WARNING: this reads the table into memory, could cause memory heap issues if too large
         # TODO: we do not use the "note" field at the moment, just use playing title from spotify
