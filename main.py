@@ -11,15 +11,34 @@ from micropython import const #, mem_info
 
 import ndef
 
-from esp32_gpio_lcd import GpioLcd
+import ssd1306
 
 import urequests as requests
 import replconf as rc
 
 # for ESP32
 vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
+
+# oled
+dc = Pin(17, mode=Pin.OUT)    # data/command
+rst = Pin(16, mode=Pin.OUT)   # reset
+cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
+# NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
+# no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
+display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
+
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
 pn532 = PN532_SPI(vspi, cs_pin, debug=False)
+
+# neopixel https://docs.micropython.org/en/latest/esp32/quickref.html#neopixel-and-apa106-driver
+#from machine import Pin
+#from neopixel import NeoPixel
+#
+#pin = Pin(0, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
+#np = NeoPixel(pin, 8)   # create NeoPixel driver on GPIO0 for 8 pixels
+#np[0] = (255, 255, 255) # set the first pixel to white
+#np.write()              # write data to all pixels
+#r, g, b = np[0]         # get first pixel colour
 
 ic, ver, rev, support = pn532.firmware_version
 print("Found PN532 with firmware version: {0}.{1}".format(ver, rev))
@@ -30,14 +49,6 @@ pn532.SAM_configuration()
 db = {}
 playing_end = None
 playing_uri = None
-
-lcd = GpioLcd(rs_pin=Pin(4),
-              enable_pin=Pin(17),
-              d4_pin=Pin(0),
-              d5_pin=Pin(16),
-              d6_pin=Pin(21),
-              d7_pin=Pin(22),
-              num_lines=2, num_columns=16)
 
 def getDB():
     global db
@@ -153,7 +164,6 @@ def syncPlayerStatus(client):
     # .context.uri (.context only present if used a context_uri to start playing)
     global playing_end
     global playing_uri
-    global lcd
     resp = client.player()
     # TODO add handling of "not playing" status because we are likely to run into this state often? (set timeout via end_time?)
     print("checking player payload")
@@ -168,8 +178,9 @@ def syncPlayerStatus(client):
                 # there is no way to know where we are in a context so set to end of current track to check "is_playing" value again
             else:
                 playing_uri = resp['item']['uri']
-            lcd.clear()
-            lcd.putstr(resp['item']['name'])
+            display.fill(0)
+            display.text(resp['item']['name'], 0, 0)
+            display.show()
             # we have current position and duration, so we should be able to "save" current playing
             # ticks_ms() should be fine as max ticks well in excess of 13 minutes (ticks_us() max value) https://forum.micropython.org/viewtopic.php?t=4652
             duration_ms = resp['item']['duration_ms']
@@ -181,21 +192,22 @@ def syncPlayerStatus(client):
 def run():
     global playing_end
     global playing_uri
-    global lcd
-    lcd.clear()
-    lcd.putstr("Running")
+    global display
+    display.fill(0)
+    display.text('Running', 0, 0)
+    display.show()
     print("Running")
     spotify = spotify_client()
-    lcd.clear()
-    lcd.putstr("NFC Read")
-    lcd.blink_cursor_on()
+    display.text('NFC Read', 0, 9)
+    display.show()
     print("Waiting for RFID/NFC card...")
     while True:
         # Check if a card is available to read
         uid = pn532.read_passive_target(timeout=1)
         print(".", end="")
         # experienced some column "drift" once when breadboarded, so maybe clear() ocassionally?
-        lcd.putstr(".")
+        display.scroll(1, 0)
+        display.show()
         # Try again if no card is available.
         if uid is None:
             gc.collect()
@@ -265,7 +277,6 @@ def run():
             print('Tag not found in loaded DB')
 
 def main():
-    lcd.putstr("Starting up")
     print("\033c")
     run()
 
