@@ -7,3 +7,5 @@ airtable="https://api.airtable.com/v0/<projectId>/<table Id or Title>?api_key=<a
 # if you need to connect to specific access point (due to connecting to bad/far access point)
 #bssid=b"\xaa\xbb\xcc\xdd\xee\xff"
 bssid=None
+# debug output for PN532 (and maybe more later)
+DEBUG=False
