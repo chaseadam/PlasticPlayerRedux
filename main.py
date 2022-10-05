@@ -16,19 +16,29 @@ import ssd1306
 import urequests as requests
 import replconf as rc
 
-# for ESP32
-vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
+from machine import reset
+
+# for PN532 
+cs_pin = Pin(5, mode=Pin.OUT, value=1)
 
 # oled
 dc = Pin(17, mode=Pin.OUT)    # data/command
 rst = Pin(16, mode=Pin.OUT)   # reset
 cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
+
+# for ESP32
+vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
+
 # NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
 # no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
 display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
 
-cs_pin = Pin(5, mode=Pin.OUT, value=1)
-pn532 = PN532_SPI(vspi, cs_pin, debug=False)
+display.fill(0)
+display.text('booting', 0 , 0)
+display.show()
+
+print("PN532 init")
+pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
 
 # neopixel https://docs.micropython.org/en/latest/esp32/quickref.html#neopixel-and-apa106-driver
 #from machine import Pin
@@ -60,14 +70,18 @@ def getDB():
     #db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
     r = requests.get(rc.airtable)
     for record in r.json()['records']:
+        # TODO errors in handling this input are not handled well
         # WARNING: this reads the table into memory, could cause memory heap issues if too large
         # TODO: we do not use the "note" field at the moment, just use playing title from spotify
-        db[str(record['fields']['tag'])] = {"uri": record['fields']['uri'], "note": record['fields']['note']}
+        # skip records which do not contain a "tag" field (usually empty)
+        if 'tag' in record['fields']:
+            db[str(record['fields']['tag'])] = {"uri": record['fields']['uri'], "note": record['fields']['note']}
     r.close()
 
 def getRecord(uid):
     if not db:
         getDB()
+    print("Searching DB for " + uid)
     return db[uid]
 
 # TODO make a library out of this, probably compatible with `with ... as` pattern?
@@ -229,7 +243,7 @@ def run():
                     break
             else:
                 record = getRecord(str([x for x in uid] ))
-                uri = getRecord(str([x for x in uid] ))['uri']
+                uri = record['uri']
             # memory allocation errors if we don't collect here
             gc.collect()
 
