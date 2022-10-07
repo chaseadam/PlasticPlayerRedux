@@ -17,6 +17,7 @@ import urequests as requests
 import replconf as rc
 
 from machine import reset
+import os
 
 # for PN532 
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
@@ -27,7 +28,7 @@ rst = Pin(16, mode=Pin.OUT)   # reset
 cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
 
 # for ESP32
-vspi = SPI(2, baudrate=100000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
+vspi = SPI(2, baudrate=1000000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
 
 # NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
 # no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
@@ -41,13 +42,12 @@ print("PN532 init")
 pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
 
 # neopixel https://docs.micropython.org/en/latest/esp32/quickref.html#neopixel-and-apa106-driver
-#from machine import Pin
-#from neopixel import NeoPixel
-#
-#pin = Pin(0, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
-#np = NeoPixel(pin, 8)   # create NeoPixel driver on GPIO0 for 8 pixels
-#np[0] = (255, 255, 255) # set the first pixel to white
-#np.write()              # write data to all pixels
+from neopixel import NeoPixel
+
+pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
+np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
+np[0] = (25, 25, 25) # set the first pixel to white
+np.write()              # write data to all pixels
 #r, g, b = np[0]         # get first pixel colour
 
 ic, ver, rev, support = pn532.firmware_version
@@ -59,6 +59,44 @@ pn532.SAM_configuration()
 db = {}
 playing_end = None
 playing_uri = None
+
+def do_connect(hostname = False):
+    import network
+    # disable AP mode not needed anymore?
+    network.WLAN(network.AP_IF).active(False)
+    sta_if = network.WLAN(network.STA_IF)
+    mac = sta_if.config('mac')
+    host = 'esp32-' + ''.join('{:02x}'.format(b) for b in mac[3:])
+    # override host if in "OAUTH" mode to set static mDNS auth host
+    # WARNING: using any hostname using a domain (i.e. .local) which is not under explicit control can lead to hijacking
+    # WARNING: possibility of collision during auth, but use documentation
+    if hostname:
+        host = hostname
+    if not sta_if.isconnected():
+        print('setting hostname...')
+        sta_if.active(True)
+        # hostname must be set after .active()
+        # if this is called too soon after .active() we get a queue error:
+        # esp-idf/components/freertos/queue.c:743 (xQueueGenericSend)- assert failed!
+        time.sleep(0.25)
+        try:
+            sta_if.config(hostname = host)
+        except ValueError:
+            # "hostname" is available in master, but not yet in June 2022 1.19.1 release
+            sta_if.config(dhcp_hostname = host)
+
+        print('connecting to network...')
+        # TODO remove hard coded BSSID and figure out how to connect to the "strongest" signal
+        sta_if.connect(rc.ssid,rc.password, bssid=rc.bssid)
+        while not sta_if.isconnected():
+            pass
+    try:
+        host = sta_if.config('hostname')
+    except ValueError:
+        # "hostname" is available in master, but not yet in June 2022 1.19.1 release
+        host = sta_if.config('dhcp_hostname')
+    print('Wifi connected as {}/{}, net={}, gw={}, dns={}'.format(
+        host, *sta_if.ifconfig()))
 
 def getDB():
     global db
@@ -291,6 +329,11 @@ def run():
             print('Tag not found in loaded DB')
 
 def main():
+    # Check OAuth stage to determine which mDNS hostname to use
+    hostname = False
+    if 'oauth-staged' in os.listdir():
+        hostname = 'esp32-oauth'
+    do_connect(hostname=hostname)
     print("\033c")
     run()
 
