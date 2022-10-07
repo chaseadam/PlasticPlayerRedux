@@ -59,6 +59,7 @@ pn532.SAM_configuration()
 db = {}
 playing_end = None
 playing_uri = None
+playing_title = None
 
 def do_connect(hostname = False):
     import network
@@ -136,12 +137,15 @@ def getNDEFMessageTLV():
         if ntag2xx_block is not None:
             # test if empty tag
             if ntag2xx_block == bytearray([0,0,0,0]):
-                print("empty block contents, assuming empty")
+                # TODO there is another common pattern which may be worth shortcutting [0,0,0,FE]
+                if rc.DEBUG:
+                    print("empty block contents, assuming empty")
                 break
-            print(
-                    "read block ", block_position,
-                [hex(x) for x in ntag2xx_block],
-            )
+            if rc.DEBUG:
+                print(
+                        "read block ", block_position,
+                    [hex(x) for x in ntag2xx_block],
+                )
             # find TLV (Tag Length Value) block
             # WARNING: assuming 1 byte format for Length
             for i, x in enumerate(ntag2xx_block):
@@ -154,10 +158,12 @@ def getNDEFMessageTLV():
                             tlv_NDEF_message_bytes.append(x)
                         message_byte_count -= 1
                     else:
-                        print("skipping count byte")
+                        if rc.DEBUG:
+                            print("skipping count byte")
                         count_byte = False
                 else:
-                    print("looking for start of TLV")
+                    if rc.DEBUG:
+                        print("looking for start of TLV")
                     tlv_message_type = x
                     # ignore any NULL TLV:
                     if x == 0x00:
@@ -179,7 +185,8 @@ def getNDEFMessageTLV():
                     elif x == 0xFE:
                         # no other messages have a 0 byte count)
                         termination = True
-                        print("termination TLV")
+                        if rc.DEBUG:
+                            print("termination TLV")
                         break
             block_position += 1
         else:
@@ -216,6 +223,7 @@ def syncPlayerStatus(client):
     # .context.uri (.context only present if used a context_uri to start playing)
     global playing_end
     global playing_uri
+    global playing_title
     resp = client.player()
     # TODO add handling of "not playing" status because we are likely to run into this state often? (set timeout via end_time?)
     print("checking player payload")
@@ -230,9 +238,8 @@ def syncPlayerStatus(client):
                 # there is no way to know where we are in a context so set to end of current track to check "is_playing" value again
             else:
                 playing_uri = resp['item']['uri']
-            display.fill(0)
-            display.text(resp['item']['name'], 0, 0)
-            display.show()
+            playing_title = resp['item']['name']
+            display_status(playing_title)
             # we have current position and duration, so we should be able to "save" current playing
             # ticks_ms() should be fine as max ticks well in excess of 13 minutes (ticks_us() max value) https://forum.micropython.org/viewtopic.php?t=4652
             duration_ms = resp['item']['duration_ms']
@@ -241,29 +248,55 @@ def syncPlayerStatus(client):
             # TODO schedule clearing these values
             playing_end = time.ticks_add(time.ticks_ms(), remaining_ms)
 
+def display_status(msg):
+    global display
+    display.fill(0)
+    display.text(msg, 0, 0)
+    display.show()
+
 def run():
     global playing_end
     global playing_uri
     global display
-    display.fill(0)
-    display.text('Running', 0, 0)
-    display.show()
+    display_status('Running')
     print("Running")
     spotify = spotify_client()
-    display.text('NFC Read', 0, 9)
-    display.show()
+    display_status('NFC Read')
     print("Waiting for RFID/NFC card...")
+    # Make LED blue
+    np[0] = (0,0,25)
+    np.write()
     while True:
         # Check if a card is available to read
         uid = pn532.read_passive_target(timeout=1)
         print(".", end="")
         # experienced some column "drift" once when breadboarded, so maybe clear() ocassionally?
-        display.scroll(1, 0)
-        display.show()
+        #display.scroll(1, 0)
+        # show estimated song progress
+        if playing_end:
+            display.rect(0,10,128,10,0,True)
+            # TODO this isn't quite accurate enough (+5-10 seconds)
+            playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
+            # TODO display in seconds or minutes/seconds
+            # TODO progress bar
+            # TODO display total length number
+            display.text(str(playing_remaining), 0, 10)
+            # is track over?
+            if playing_remaining < 0:
+                playing_end = False
+                # Make LED red
+                # TODO fade out over time
+                np[0] = (25,0,0)
+                np.write()
+                display.rect(0,10,128,10,0,True)
+                # TODO reset the device screen to default?
+                display.fill(0)
+            display.show()
         # Try again if no card is available.
         if uid is None:
             gc.collect()
             continue
+        #display_status('Looking up Tag')
         #print("Found card with UID:", [hex(i) for i in uid])
         # output uid in format matching espruino library for input into PlasticPlayer JSON
         print("Found card with UID:", [x for x in uid])
@@ -278,17 +311,21 @@ def run():
                 tag_uri = getNDEFspotify(ndef_message_bytes)
                 if tag_uri:
                     uri = tag_uri
+                    display_status('Found Spotify NDEF')
                     break
             else:
                 record = getRecord(str([x for x in uid] ))
                 uri = record['uri']
+                display_status('Found Tag in DB')
             # memory allocation errors if we don't collect here
             gc.collect()
 
             # WARNING: esp32 specific and probably doesn't help with speed of TLS setup?
             if playing_end is None:
+                # TODO option to always stomp on non-player controlled activity to speed up play?
                 syncPlayerStatus(spotify)
             if playing_uri == uri:
+                display_status(playing_title)
                 # TODO use this logic in NFC read loop to update screen with playing track
                 playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
                 # this may not be exact, possibly add a gap or "resync"?
@@ -305,6 +342,10 @@ def run():
             # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
             ticks_start = time.ticks_ms()
             # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
+            display_status('Sending to Spotify')
+            # Make LED green
+            np[0] = (0,25,0)
+            np.write()
             if 'track' in uri:
                 spotify.play(uris=[uri])
             else:
@@ -316,9 +357,10 @@ def run():
             # screen updates when we sync, so sync now
             # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
             # TODO replace this sleep
+            # without this sleep, we show the previously playing track
             time.sleep_ms(2000)
-            # making this call immediately causes memory allocation error. Possibly 
             gc.collect()
+            # making this call immediately causes memory allocation error, so we added gc.collect() before
             syncPlayerStatus(spotify)
         # occasional timeouts with ECONNABORTED, and HOSTUNREACHABLE, probably shout reset if that happens
         except OSError as e:
@@ -326,7 +368,16 @@ def run():
         except SpotifyWebApiError as e:
             print('Error: {}, Reason: {}'.format(e, e.reason))
         except KeyError as e:
+            # show error and tag ID so it can be used in airtable DB
             print('Tag not found in loaded DB')
+            display.fill(0)
+            display.text('tag not in db', 0, 0)
+            # split between two lines, 16 char each line
+            # warning: max theoretical length is 35 exceeds actual space of 32 chars
+            uid_str = str([x for x in uid])
+            display.text(uid_str[:16], 0 , 10)
+            display.text(uid_str[16:], 0 , 20)
+            display.show()
 
 def main():
     # Check OAuth stage to determine which mDNS hostname to use
