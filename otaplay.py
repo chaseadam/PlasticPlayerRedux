@@ -14,9 +14,22 @@ def do_connect(hostname = False):
     sta_if = network.WLAN(network.STA_IF)
     if not sta_if.isconnected():
         sta_if.active(True)
+        if not rc.bssid:
+            ap_strong = ('', -100)
+            print('scanning for all access points to determine highest RSSI')
+            for ap in sta_if.scan():
+                if ap[0] == rc.ssid.encode():
+                    if ap[3] > ap_strong[1]:
+                        print("found {} with strength {}".format(ap[1].hex(),ap[3]))
+                        ap_strong = (ap[1], ap[3])
+                    else:
+                        print("rejecting {} with strength {}".format(ap[1].hex(),ap[3]))
+            # TODO handle "not found"
+        else:
+            print("using hard coded bssid")
+            ap_strong = (rc.bssid, 0)
         print('connecting to network...')
-        # TODO remove hard coded BSSID and figure out how to connect to the "strongest" signal
-        sta_if.connect(rc.ssid,rc.password, bssid=rc.bssid)
+        sta_if.connect(rc.ssid,rc.password, bssid=ap_strong[0])
         while not sta_if.isconnected():
             print('.', end = '')
             sleep(0.25)
