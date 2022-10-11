@@ -9,3 +9,5 @@ airtable="https://api.airtable.com/v0/<projectId>/<table Id or Title>?api_key=<a
 bssid=None
 # debug output for PN532 (and maybe more later)
 DEBUG=False
+update_host="example.com"
+update_port=8889
