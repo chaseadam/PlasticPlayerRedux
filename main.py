@@ -16,8 +16,12 @@ import ssd1306
 import urequests as requests
 import replconf as rc
 
+# TODO debugging, remove
 from machine import reset
 import os
+
+button_a = Pin(32, Pin.IN, Pin.PULL_UP)
+button_b = Pin(33, Pin.IN, Pin.PULL_UP)
 
 # for PN532 
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
@@ -258,6 +262,7 @@ def run():
     global playing_end
     global playing_uri
     global display
+    paused = False
     display_status('Running')
     print("Running")
     spotify = spotify_client()
@@ -267,6 +272,33 @@ def run():
     np[0] = (0,0,25)
     np.write()
     while True:
+        # TODO find a way to interrupt on button press, so don't have to wait for NFC timeout
+        # TODO add debouncing or "fire once", but for now, will use HTTP call delay and NFC timeout
+        if not button_a.value():
+            # TODO handle local playing context?
+            if not paused:
+                # always immediately send pause command to not delay pausing if needed?
+                spotify.pause()
+                print("pausing")
+                paused = True
+            else:
+                # should we resume? (can we tell if we always call pause first?)
+                # play
+                print("resuming")
+                spotify.resume()
+                # reset local state
+                time.sleep_ms(2000)
+                gc.collect()
+                # TODO check to see if this handles partially complete songs
+                syncPlayerStatus(spotify)
+        if not button_b.value():
+            print("next song")
+            # next
+            spotify.next()
+            # reset local state
+            time.sleep_ms(2000)
+            gc.collect()
+            syncPlayerStatus(spotify)
         # Check if a card is available to read
         uid = pn532.read_passive_target(timeout=1)
         print(".", end="")
