@@ -29,6 +29,10 @@ nextPartition = currentPartition.get_next_update()
 button_a = Pin(32, Pin.IN, Pin.PULL_UP)
 button_b = Pin(33, Pin.IN, Pin.PULL_UP)
 
+# for config page and update
+import socket
+import re
+
 # for PN532 
 cs_pin = Pin(5, mode=Pin.OUT, value=1)
 
@@ -49,14 +53,17 @@ display.text('booting', 0 , 0)
 display.show()
 
 print("load config")
+def config_save(config):
+    with open('config.json', 'w') as f:
+        json.dump(config, f)
+
 try:
     with open('config.json', 'r') as f:
         config = json.load(f)
 except OSError as exc:
     if exc.errno == errno.ENOENT:
         config = {}
-        with open('config.json', 'w') as f:
-            json.dump(config, f)
+        config_save(config)
     else:
         print('unknown OSError {0}'.format(exc.errno))
         exit
@@ -151,12 +158,13 @@ def do_connect(hostname = False):
 def getDB():
     global db
     # TODO load from external source
+    # TODO handle missing config (if we get here)
     # i.e. "https://api.airtable.com/v0/appaHNgIJQBNzJHh4/Spotify?view=Grid%20view" -H "Authorization: Bearer XXXX"
     # TypeError: unsupported type for __hash__: 'bytearray'
     # TypeError: unsupported type for __hash__: 'list'
     # Example entry
     #db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
-    r = requests.get(rc.airtable)
+    r = requests.get(config['airtable'])
     for record in r.json()['records']:
         # TODO errors in handling this input are not handled well
         # WARNING: this reads the table into memory, could cause memory heap issues if too large
@@ -303,6 +311,69 @@ def display_status(msg):
     display.text(msg, 0, 0)
     display.show()
 
+def web_page():
+    # TODO replace with form (with existing values) to submit GET request with params
+    html = """<html><head> <title>ESP Web Server</title> <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,"> <style>html{font-family: Helvetica; display:inline-block; margin: 0px auto; text-align: center;}
+    h1{color: #0F3376; padding: 2vh;}p{font-size: 1.5rem;}.button{display: inline-block; background-color: #e7bd3b; border: none; 
+    border-radius: 4px; color: white; padding: 16px 40px; text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}
+    .button2{background-color: #4286f4;}</style></head><body> <h1>ESP Web Server</h1> 
+    <p><a href="/?led=off"><button class="button button2">OFF</button></a></p></body></html>"""
+    return html
+
+def run_server():
+    # config page
+    #TODO secure config page
+    # https://docs.micropython.org/en/latest/esp8266/tutorial/network_tcp.html#simple-http-server
+    addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
+    s = socket.socket()
+    # allow reuse in case we want to enter config again after .close() before timeout
+    # https://forum.micropython.org/viewtopic.php?t=10412
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(addr)
+    s.listen(1)
+    display.fill(0)
+    display.text("CONF SERVER START", 0, 0)
+    display.text("IP address here", 0, 10)
+    display.show()
+    while True:
+        cl, addr = s.accept()
+        print('client connected from', addr)
+        # CPython compatibility
+        # https://docs.micropython.org/en/latest/library/socket.html?highlight=makefile
+        cl_file = cl.makefile('rwb', 0)
+        settings_updated = False
+        while True:
+            # read till end line by line until end and throw away
+            line = cl_file.readline()
+            # airtable
+            # WARNING: assuming only one param, so no `&` in URL
+            # `\s` to remove HTTP request details after URL
+            airtable = re.search('airtable=([^& ]*)[&]*', line)
+            if airtable:
+                print(airtable.group(1))
+                config['airtable'] = airtable.group(1).decode()
+                settings_updated = True
+            # update host
+            # update port
+            update_host = re.search('update_host=([^& ]*)&*', line)
+            update_port = re.search('update_port=([^& ]*)&*', line)
+            if update_host:
+                settings_updated = True
+                # WARNING: assume we were passed port as well
+                config['update_host'] = update_host.group(1)
+                config['update_port'] = update_port.group(1)
+            if not line or line == b'\r\n':
+                break
+        response = web_page()
+        cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
+        cl.send(response)
+        cl.close()
+        if settings_updated:
+            config_save(config)
+            break
+    s.close()
+
 def run():
     global playing_end
     global playing_uri
@@ -323,20 +394,8 @@ def run():
             # check if both buttons pressed, start ota update
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
-                display.fill(0)
-                display.text("OTA UPDATE START", 0, 0)
-                display.show()
-                try:
-                    update()
-                except OSError as exc:
-                    if exc.errno == errno.ECONNRESET:
-                        display.text("failed connect", 0, 10)
-                    else:
-                        display.text("failed: {}".format(exc.errno), 0, 10)
-                    display.show()
-                    # TODO find proper way to halt
-                    exit
-                switch()
+                #ota()
+                run_server()
             # TODO handle local playing context?
             if not paused:
                 # always immediately send pause command to not delay pausing if needed?
@@ -410,9 +469,14 @@ def run():
                     display_status('Found Spotify NDEF')
                     break
             else:
-                record = getRecord(str([x for x in uid] ))
-                uri = record['uri']
-                display_status('Found Tag in DB')
+                # check airtable if url in config
+                if 'airtable' in config.keys():
+                    record = getRecord(str([x for x in uid] ))
+                    uri = record['uri']
+                    display_status('Found Tag in DB')
+                else:
+                    print('no uri payload and no db configured')
+                    break
             # memory allocation errors if we don't collect here
             gc.collect()
 
@@ -475,15 +539,31 @@ def run():
             display.text(uid_str[16:], 0 , 20)
             display.show()
 
+def ota():
+    display.fill(0)
+    display.text("OTA UPDATE START", 0, 0)
+    display.show()
+    try:
+        update()
+    except OSError as exc:
+        if exc.errno == errno.ECONNRESET:
+            display.text("failed connect", 0, 10)
+        else:
+            display.text("failed: {}".format(exc.errno), 0, 10)
+        display.show()
+        # TODO find proper way to halt
+        exit
+    switch()
+
 # TODO: test connection stablility before updating
+# TODO: handle no update config set
 def update():
-    import socket
     SEC_SIZE = 4096
     buf = bytearray(SEC_SIZE)
     i = 0
     assert nextPartition.ioctl(5,0) == SEC_SIZE
     SEC_COUNT = nextPartition.ioctl(4,0)
-    addr = socket.getaddrinfo(rc.update_host, rc.update_port)[0][-1]
+    addr = socket.getaddrinfo(config['update_host'], config['update_port'])[0][-1]
     s = socket.socket()
     s.connect(addr)
     print("connected")
