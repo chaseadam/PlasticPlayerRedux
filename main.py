@@ -1,4 +1,7 @@
 import time
+# for oauth state between resets
+import os
+import json
 
 from spotify_web_api import (
     spotify_client,
@@ -16,9 +19,12 @@ import ssd1306
 import urequests as requests
 import replconf as rc
 
-# TODO debugging, remove
+from esp32 import Partition
 from machine import reset
-import os
+import errno
+
+currentPartition = Partition(Partition.RUNNING)
+nextPartition = currentPartition.get_next_update()
 
 button_a = Pin(32, Pin.IN, Pin.PULL_UP)
 button_b = Pin(33, Pin.IN, Pin.PULL_UP)
@@ -41,6 +47,19 @@ display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
 display.fill(0)
 display.text('booting', 0 , 0)
 display.show()
+
+print("load config")
+try:
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+except OSError as exc:
+    if exc.errno == errno.ENOENT:
+        config = {}
+        with open('config.json', 'w') as f:
+            json.dump(config, f)
+    else:
+        print('unknown OSError {0}'.format(exc.errno))
+        exit
 
 print("PN532 init")
 pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
@@ -67,6 +86,18 @@ playing_title = None
 
 def do_connect(hostname = False):
     import network
+    # network config missing
+    if not 'ssid' in config.keys():
+        # start wifi manager library to get network config
+        import wifimgr
+        wlan = wifimgr.get_connection()
+        if wlan is None:
+            print("Could not initialize the network connection.")
+            while True:
+                pass  # you shall not pass
+        # restart to use our own connection logic instead of wifimgr
+        reset()
+
     # disable AP mode not needed anymore?
     network.WLAN(network.AP_IF).active(False)
     sta_if = network.WLAN(network.STA_IF)
@@ -90,11 +121,25 @@ def do_connect(hostname = False):
             # "hostname" is available in master, but not yet in June 2022 1.19.1 release
             sta_if.config(dhcp_hostname = host)
 
+        if not rc.bssid:
+            ap_strong = ('', -100)
+            print('scanning for all access points to determine highest RSSI')
+            for ap in sta_if.scan():
+                if ap[0] == config['ssid'].encode():
+                    if ap[3] > ap_strong[1]:
+                        print("found {} with strength {}".format(ap[1].hex(),ap[3]))
+                        ap_strong = (ap[1], ap[3])
+                    else:
+                        print("rejecting {} with strength {}".format(ap[1].hex(),ap[3]))
+            # TODO handle "not found"
+        else:
+            print("using hard coded bssid")
+            ap_strong = (rc.bssid, 0)
         print('connecting to network...')
-        # TODO remove hard coded BSSID and figure out how to connect to the "strongest" signal
-        sta_if.connect(rc.ssid,rc.password, bssid=rc.bssid)
+        sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
         while not sta_if.isconnected():
-            pass
+            print('.', end = '')
+            sleep(0.25)
     try:
         host = sta_if.config('hostname')
     except ValueError:
@@ -275,6 +320,23 @@ def run():
         # TODO find a way to interrupt on button press, so don't have to wait for NFC timeout
         # TODO add debouncing or "fire once", but for now, will use HTTP call delay and NFC timeout
         if not button_a.value():
+            # check if both buttons pressed, start ota update
+            # TODO add more intentional confirmation for OTA update
+            if not button_b.value():
+                display.fill(0)
+                display.text("OTA UPDATE START", 0, 0)
+                display.show()
+                try:
+                    update()
+                except OSError as exc:
+                    if exc.errno == errno.ECONNRESET:
+                        display.text("failed connect", 0, 10)
+                    else:
+                        display.text("failed: {}".format(exc.errno), 0, 10)
+                    display.show()
+                    # TODO find proper way to halt
+                    exit
+                switch()
             # TODO handle local playing context?
             if not paused:
                 # always immediately send pause command to not delay pausing if needed?
@@ -302,6 +364,8 @@ def run():
         # Check if a card is available to read
         uid = pn532.read_passive_target(timeout=1)
         print(".", end="")
+        # TODO more thorough self check would be good
+        commit()
         # experienced some column "drift" once when breadboarded, so maybe clear() ocassionally?
         #display.scroll(1, 0)
         # show estimated song progress
@@ -410,6 +474,46 @@ def run():
             display.text(uid_str[:16], 0 , 10)
             display.text(uid_str[16:], 0 , 20)
             display.show()
+
+# TODO: test connection stablility before updating
+def update():
+    import socket
+    SEC_SIZE = 4096
+    buf = bytearray(SEC_SIZE)
+    i = 0
+    assert nextPartition.ioctl(5,0) == SEC_SIZE
+    SEC_COUNT = nextPartition.ioctl(4,0)
+    addr = socket.getaddrinfo(rc.update_host, rc.update_port)[0][-1]
+    s = socket.socket()
+    s.connect(addr)
+    print("connected")
+    while True:
+        if i > SEC_COUNT:
+            print("attempt to write more sectors than available")
+        # .recv() sets max size, but does not wait for buffer to fill?
+        # .readinto() is much more consistent with size and network traffic than .recv()
+        # TODO .read() vs .readinto()
+        # sometimes there is a large delay to this returning (when using with netcat server?)
+        #s.readinto(buf, SEC_SIZE)
+        buf = s.read(SEC_SIZE)
+        if buf:
+            if len(buf) < SEC_SIZE:
+                print('adding padding to sector')
+                buf = buf + bytes(b'\xff'*(4096 - len(buf)))
+            assert len(buf) == 4096
+            print('write block: {0}'.format(i))
+            nextPartition.writeblocks(i, buf)
+            i += 1
+        else:
+            break
+    s.close()
+
+def switch():
+    nextPartition.set_boot()
+    reset()
+
+def commit():
+    currentPartition.mark_app_valid_cancel_rollback()
 
 def main():
     # Check OAuth stage to determine which mDNS hostname to use
