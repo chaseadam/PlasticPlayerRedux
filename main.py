@@ -18,7 +18,6 @@ import ndef
 import ssd1306
 
 import urequests as requests
-import replconf as rc
 
 from esp32 import Partition
 from machine import reset
@@ -45,6 +44,7 @@ def config_save(config):
         json.dump(config, f)
 
 # put these in global space
+DEBUG = False
 display = None
 pn532 = None
 np = None
@@ -73,7 +73,7 @@ def init_peripherals():
     display.show()
 
     print("PN532 init")
-    pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
+    pn532 = PN532_SPI(vspi, cs_pin, debug=DEBUG)
     
     pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
     np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
@@ -133,10 +133,10 @@ def getNDEFMessageTLV():
             # test if empty tag
             if ntag2xx_block == bytearray([0,0,0,0]):
                 # TODO there is another common pattern which may be worth shortcutting [0,0,0,FE]
-                if rc.DEBUG:
+                if DEBUG:
                     print("empty block contents, assuming empty")
                 break
-            if rc.DEBUG:
+            if DEBUG:
                 print(
                         "read block ", block_position,
                     [hex(x) for x in ntag2xx_block],
@@ -153,11 +153,11 @@ def getNDEFMessageTLV():
                             tlv_NDEF_message_bytes.append(x)
                         message_byte_count -= 1
                     else:
-                        if rc.DEBUG:
+                        if DEBUG:
                             print("skipping count byte")
                         count_byte = False
                 else:
-                    if rc.DEBUG:
+                    if DEBUG:
                         print("looking for start of TLV")
                     tlv_message_type = x
                     # ignore any NULL TLV:
@@ -180,7 +180,7 @@ def getNDEFMessageTLV():
                     elif x == 0xFE:
                         # no other messages have a 0 byte count)
                         termination = True
-                        if rc.DEBUG:
+                        if DEBUG:
                             print("termination TLV")
                         break
             block_position += 1
@@ -343,7 +343,6 @@ def run():
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
                 run_server()
-                break
             # TODO handle local playing context?
             elif not paused:
                 # always immediately send pause command to not delay pausing if needed?
