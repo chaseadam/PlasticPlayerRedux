@@ -250,13 +250,30 @@ def display_status(msg):
     display.show()
 
 def web_page():
-    # TODO replace with form (with existing values) to submit GET request with params
-    html = """<html><head> <title>ESP Web Server</title> <meta name="viewport" content="width=device-width, initial-scale=1">
+    # TODO fill in form with existing values
+    # TODO add "exit config mode" button
+    html = """<html><head> <title>Plastic Redux</title> <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="data:,"> <style>html{font-family: Helvetica; display:inline-block; margin: 0px auto; text-align: center;}
-    h1{color: #0F3376; padding: 2vh;}p{font-size: 1.5rem;}.button{display: inline-block; background-color: #e7bd3b; border: none; 
+    h1{color: #0F3376; padding: 2vh;}p{font-size: 1.5rem;}.button{display: inline-block; background-color: #e7bd3b; border: none;
     border-radius: 4px; color: white; padding: 16px 40px; text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}
-    .button2{background-color: #4286f4;}</style></head><body> <h1>ESP Web Server</h1> 
-    <p><a href="/?led=off"><button class="button button2">OFF</button></a></p></body></html>"""
+    .button2{background-color: #4286f4;}</style></head><body>
+    <p>To exit without taking action, power cycle the device.</p>
+    <h1>ESP Web Server</h1>
+    <form action="/" method="get">
+        <label for="airtable">airtable</label>
+        <input type="text" name="airtable" id="airtable">
+</br>
+        <label for="update_host">update_host</label>
+        <input type="text" name="update_host" id="update_host">
+</br>
+        <label for="update_port">update_port</label>
+        <input type="text" name="update_port" id="update_port">
+        </br>
+        <button type="submit">submit</button>
+    </form>
+    <a href="/?otafirmware=True">OTA Firmware</a>
+    <a href="/?otacode=True">OTA Code</a>
+    </body></html>"""
     return html
 
 def run_server():
