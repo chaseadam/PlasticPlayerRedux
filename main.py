@@ -26,6 +26,7 @@ import errno
 currentPartition = Partition(Partition.RUNNING)
 nextPartition = currentPartition.get_next_update()
 
+button_0 = Pin(0, Pin.IN, Pin.PULL_UP)
 button_a = Pin(32, Pin.IN, Pin.PULL_UP)
 button_b = Pin(33, Pin.IN, Pin.PULL_UP)
 
@@ -52,6 +53,7 @@ display.fill(0)
 display.text('booting', 0 , 0)
 display.show()
 
+# TODO put oauth-saved state in config.json
 print("load config")
 def config_save(config):
     with open('config.json', 'w') as f:
@@ -594,8 +596,19 @@ def switch():
 
 def commit():
     currentPartition.mark_app_valid_cancel_rollback()
+def factory_reset():
+    print('deleting all settings files')
+    os.remove('config.json')
+    os.remove('wifimgr.dat')
+    reset()
 
 def main():
+    if button_0.value():
+        display_status("Factory Reset?")
+        while True:
+            if not button_a.value():
+                factory_reset()
+
     # Check OAuth stage to determine which mDNS hostname to use
     hostname = False
     if 'oauth-staged' in os.listdir():
