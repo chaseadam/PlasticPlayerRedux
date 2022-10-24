@@ -483,7 +483,8 @@ def run():
                     display_status('Found Tag in DB')
                 else:
                     print('no uri payload and no db configured')
-                    break
+                    # TODO show URI ID?
+                    continue
             # memory allocation errors if we don't collect here
             gc.collect()
 
