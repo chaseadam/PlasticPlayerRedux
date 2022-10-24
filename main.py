@@ -343,8 +343,9 @@ def run():
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
                 run_server()
+                break
             # TODO handle local playing context?
-            if not paused:
+            elif not paused:
                 # always immediately send pause command to not delay pausing if needed?
                 spotify.pause()
                 print("pausing")
@@ -542,24 +543,11 @@ def switch():
 
 def commit():
     currentPartition.mark_app_valid_cancel_rollback()
-def factory_reset():
-    # WARNING: we get into a boot loop if config.json does not contain wifi, but wifi.dat does
-    # this is due to modifications made to wifimgr which need to be improved, or remove wifi.dat handling
-    print('deleting all settings files')
-    os.remove('config.json')
-    os.remove('wifi.dat')
-    os.remove('credentials.json')
-    reset()
 
 # put in global space
 config = None
 def main():
     global config
-    if not button_0.value():
-        display_status("Factory Reset?")
-        while True:
-            if not button_a.value():
-                factory_reset()
 
     # TODO put oauth-saved state in config.json
     # TODO move credentials.json contents into this config

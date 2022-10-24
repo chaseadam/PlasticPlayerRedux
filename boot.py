@@ -6,6 +6,7 @@ import json
 import os
 import time
 import machine
+Pin = machine.Pin
 # import webrepl
 
 #webrepl.start(password=wc.PASS)
@@ -14,6 +15,27 @@ gc.collect()
 def config_save(config):
     with open('config.json', 'w') as f:
         json.dump(config, f)
+
+def factory_reset():
+    # WARNING: we get into a boot loop if config.json does not contain wifi, but wifi.dat does
+    # this is due to modifications made to wifimgr which need to be improved, or remove wifi.dat handling
+    print('deleting all settings files')
+    try:
+        os.remove('config.json')
+    # skip if file isn't there
+    except OSError as exc:
+        pass
+    try:
+        os.remove('wifi.dat')
+    # skip if file isn't there
+    except OSError as exc:
+        pass
+    try:
+        os.remove('credentials.json')
+    # skip if file isn't there
+    except OSError as exc:
+        pass
+    machine.reset()
 
 def do_connect(hostname = False):
     import network
@@ -74,6 +96,16 @@ def do_connect(hostname = False):
     print('Wifi connected as {}/{}, net={}, gw={}, dns={}'.format(
         host, *sta_if.ifconfig()))
 
+button_0 = Pin(0, Pin.IN, Pin.PULL_UP)
+button_a = Pin(32, Pin.IN, Pin.PULL_UP)
+
+if not button_a.value():
+    # TODO indicate status via neopixel
+    print("Factory Reset?")
+    while True:
+        if not button_0.value():
+            factory_reset()
+
 # TODO put oauth-saved state in config.json
 # TODO move credentials.json contents into this config
 print("load config")
@@ -95,6 +127,7 @@ if 'oauth-staged' in os.listdir():
 do_connect(hostname=hostname)
 # clear screen
 #print("\033c")
+gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 if 'ota_code' in config:
     import micropython
     import senko
@@ -104,11 +137,10 @@ if 'ota_code' in config:
     GITHUB_URL = "https://raw.githubusercontent.com/chaseadam/PlasticPlayerRedux/ota"
     # TODO check for OTA available and notify user
     # TODO what about libraries (possibly trigger firmware update?)
-    gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
     micropython.mem_info()
-    OTA = senko.Senko(None, None, url=GITHUB_URL, files=["boot","main.py"])
+    OTA = senko.Senko(None, None, url=GITHUB_URL, files=["boot.py","main.py"])
     if OTA.update():
         print('Updated, rebooting!')
-        reset()
+        machine.reset()
     else:
         print('No OTA available')
