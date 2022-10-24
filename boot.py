@@ -5,6 +5,7 @@ import gc
 import json
 import os
 import time
+import machine
 # import webrepl
 
 #webrepl.start(password=wc.PASS)
@@ -26,7 +27,7 @@ def do_connect(hostname = False):
             while True:
                 pass  # you shall not pass
         # restart to use our own connection logic instead of wifimgr
-        reset()
+        machine.reset()
 
     # disable AP mode not needed anymore?
     network.WLAN(network.AP_IF).active(False)
