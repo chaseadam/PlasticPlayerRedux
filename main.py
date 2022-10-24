@@ -1,4 +1,5 @@
 import time
+import micropython
 # for oauth state between resets
 import os
 import json
@@ -23,6 +24,8 @@ from esp32 import Partition
 from machine import reset
 import errno
 
+import senko
+
 currentPartition = Partition(Partition.RUNNING)
 nextPartition = currentPartition.get_next_update()
 
@@ -34,59 +37,56 @@ button_b = Pin(33, Pin.IN, Pin.PULL_UP)
 import socket
 import re
 
-# for PN532 
-cs_pin = Pin(5, mode=Pin.OUT, value=1)
+# neopixel https://docs.micropython.org/en/latest/esp32/quickref.html#neopixel-and-apa106-driver
+from neopixel import NeoPixel
 
-# oled
-dc = Pin(17, mode=Pin.OUT)    # data/command
-rst = Pin(16, mode=Pin.OUT)   # reset
-cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
-
-# for ESP32
-vspi = SPI(2, baudrate=1000000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
-
-# NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
-# no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
-display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
-
-display.fill(0)
-display.text('booting', 0 , 0)
-display.show()
-
-# TODO put oauth-saved state in config.json
-print("load config")
 def config_save(config):
     with open('config.json', 'w') as f:
         json.dump(config, f)
 
-try:
-    with open('config.json', 'r') as f:
-        config = json.load(f)
-except OSError as exc:
-    if exc.errno == errno.ENOENT:
-        config = {}
-        config_save(config)
-    else:
-        print('unknown OSError {0}'.format(exc.errno))
-        exit
+# put these in global space
+display = None
+pn532 = None
+np = None
+def init_peripherals():
+    global display
+    global pn532
+    global np
 
-print("PN532 init")
-pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
+    # for PN532 
+    cs_pin = Pin(5, mode=Pin.OUT, value=1)
+    
+    # oled
+    dc = Pin(17, mode=Pin.OUT)    # data/command
+    rst = Pin(16, mode=Pin.OUT)   # reset
+    cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
+    
+    # for ESP32
+    vspi = SPI(2, baudrate=1000000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
+    
+    # NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
+    # no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
+    display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
+    
+    display.fill(0)
+    display.text('booting', 0 , 0)
+    display.show()
 
-# neopixel https://docs.micropython.org/en/latest/esp32/quickref.html#neopixel-and-apa106-driver
-from neopixel import NeoPixel
+    print("PN532 init")
+    pn532 = PN532_SPI(vspi, cs_pin, debug=rc.DEBUG)
+    
+    pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
+    np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
+    np[0] = (25, 25, 25) # set the first pixel to white
+    np.write()              # write data to all pixels
+    #r, g, b = np[0]         # get first pixel colour
+    
+    ic, ver, rev, support = pn532.firmware_version
+    print("Found PN532 with firmware version: {0}.{1}".format(ver, rev))
+    
+    # Configure PN532 to communicate with MiFare cards
+    pn532.SAM_configuration()
 
-pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
-np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
-np[0] = (25, 25, 25) # set the first pixel to white
-np.write()              # write data to all pixels
-#r, g, b = np[0]         # get first pixel colour
-
-ic, ver, rev, support = pn532.firmware_version
-print("Found PN532 with firmware version: {0}.{1}".format(ver, rev))
-
-# Configure PN532 to communicate with MiFare cards
-pn532.SAM_configuration()
 
 db = {}
 playing_end = None
@@ -148,7 +148,7 @@ def do_connect(hostname = False):
         sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
         while not sta_if.isconnected():
             print('.', end = '')
-            sleep(0.25)
+            time.sleep(0.25)
     try:
         host = sta_if.config('hostname')
     except ValueError:
@@ -348,6 +348,11 @@ def run_server():
         while True:
             # read till end line by line until end and throw away
             line = cl_file.readline()
+            if "otaupdate=True" in line:
+                display_status('Code OTA....')
+                config['ota_code'] = True
+                config_save(config)
+                reset()
             # airtable
             # WARNING: assuming only one param, so no `&` in URL
             # `\s` to remove HTTP request details after URL
@@ -597,24 +602,45 @@ def switch():
 def commit():
     currentPartition.mark_app_valid_cancel_rollback()
 def factory_reset():
+    # WARNING: we get into a boot loop if config.json does not contain wifi, but wifi.dat does
+    # this is due to modifications made to wifimgr which need to be improved, or remove wifi.dat handling
     print('deleting all settings files')
     os.remove('config.json')
-    os.remove('wifimgr.dat')
+    os.remove('wifi.dat')
     reset()
 
+# put in global space
+config = None
 def main():
-    if button_0.value():
+    global config
+    if not button_0.value():
         display_status("Factory Reset?")
         while True:
             if not button_a.value():
                 factory_reset()
 
+    # TODO put oauth-saved state in config.json
+    # TODO move credentials.json contents into this config
+    print("load config")
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            config = {}
+            config_save(config)
+        else:
+            print('unknown OSError {0}'.format(exc.errno))
+            exit
     # Check OAuth stage to determine which mDNS hostname to use
     hostname = False
     if 'oauth-staged' in os.listdir():
         hostname = 'esp32-oauth'
-    do_connect(hostname=hostname)
-    print("\033c")
+    # already done in boot.py
+    #do_connect(hostname=hostname)
+    # clear screen
+    #print("\033c")
+    init_peripherals()
     run()
 
 if __name__ == '__main__':
