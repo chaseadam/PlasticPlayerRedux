@@ -360,6 +360,7 @@ def run():
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
                 run_server()
+                display_status('NFC Read')
             # TODO handle local playing context?
             elif not paused:
                 # always immediately send pause command to not delay pausing if needed?
