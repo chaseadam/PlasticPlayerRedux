@@ -93,70 +93,6 @@ playing_end = None
 playing_uri = None
 playing_title = None
 
-def do_connect(hostname = False):
-    import network
-    # network config missing
-    if not 'ssid' in config.keys():
-        # start wifi manager library to get network config
-        import wifimgr
-        wlan = wifimgr.get_connection()
-        if wlan is None:
-            print("Could not initialize the network connection.")
-            while True:
-                pass  # you shall not pass
-        # restart to use our own connection logic instead of wifimgr
-        reset()
-
-    # disable AP mode not needed anymore?
-    network.WLAN(network.AP_IF).active(False)
-    sta_if = network.WLAN(network.STA_IF)
-    mac = sta_if.config('mac')
-    host = 'esp32-' + ''.join('{:02x}'.format(b) for b in mac[3:])
-    # override host if in "OAUTH" mode to set static mDNS auth host
-    # WARNING: using any hostname using a domain (i.e. .local) which is not under explicit control can lead to hijacking
-    # WARNING: possibility of collision during auth, but use documentation
-    if hostname:
-        host = hostname
-    if not sta_if.isconnected():
-        print('setting hostname...')
-        sta_if.active(True)
-        # hostname must be set after .active()
-        # if this is called too soon after .active() we get a queue error:
-        # esp-idf/components/freertos/queue.c:743 (xQueueGenericSend)- assert failed!
-        time.sleep(0.25)
-        try:
-            sta_if.config(hostname = host)
-        except ValueError:
-            # "hostname" is available in master, but not yet in June 2022 1.19.1 release
-            sta_if.config(dhcp_hostname = host)
-
-        if not rc.bssid:
-            ap_strong = ('', -100)
-            print('scanning for all access points to determine highest RSSI')
-            for ap in sta_if.scan():
-                if ap[0] == config['ssid'].encode():
-                    if ap[3] > ap_strong[1]:
-                        print("found {} with strength {}".format(ap[1].hex(),ap[3]))
-                        ap_strong = (ap[1], ap[3])
-                    else:
-                        print("rejecting {} with strength {}".format(ap[1].hex(),ap[3]))
-            # TODO handle "not found"
-        else:
-            print("using hard coded bssid")
-            ap_strong = (rc.bssid, 0)
-        print('connecting to network...')
-        sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
-        while not sta_if.isconnected():
-            print('.', end = '')
-            time.sleep(0.25)
-    try:
-        host = sta_if.config('hostname')
-    except ValueError:
-        # "hostname" is available in master, but not yet in June 2022 1.19.1 release
-        host = sta_if.config('dhcp_hostname')
-    print('Wifi connected as {}/{}, net={}, gw={}, dns={}'.format(
-        host, *sta_if.ifconfig()))
-
 def getDB():
     global db
     # TODO load from external source
@@ -336,7 +272,10 @@ def run_server():
     s.listen(1)
     display.fill(0)
     display.text("CONF SERVER START", 0, 0)
-    display.text("IP address here", 0, 10)
+    import network
+    sta = network.WLAN(network.STA_IF)
+    ip = sta.ifconfig()[0]
+    display.text(ip, 0, 10)
     display.show()
     while True:
         cl, addr = s.accept()
@@ -348,7 +287,9 @@ def run_server():
         while True:
             # read till end line by line until end and throw away
             line = cl_file.readline()
-            if "otaupdate=True" in line:
+            if "otafirmware=True" in line:
+                ota()
+            elif "otacode=True" in line:
                 display_status('Code OTA....')
                 config['ota_code'] = True
                 config_save(config)
@@ -401,7 +342,6 @@ def run():
             # check if both buttons pressed, start ota update
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
-                #ota()
                 run_server()
             # TODO handle local playing context?
             if not paused:
@@ -608,6 +548,7 @@ def factory_reset():
     print('deleting all settings files')
     os.remove('config.json')
     os.remove('wifi.dat')
+    os.remove('credentials.json')
     reset()
 
 # put in global space
@@ -634,11 +575,6 @@ def main():
             print('unknown OSError {0}'.format(exc.errno))
             exit
     # Check OAuth stage to determine which mDNS hostname to use
-    hostname = False
-    if 'oauth-staged' in os.listdir():
-        hostname = 'esp32-oauth'
-    # already done in boot.py
-    #do_connect(hostname=hostname)
     # clear screen
     #print("\033c")
     init_peripherals()

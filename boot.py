@@ -106,7 +106,7 @@ if 'ota_code' in config:
     # TODO what about libraries (possibly trigger firmware update?)
     gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
     micropython.mem_info()
-    OTA = senko.Senko(None, None, url=GITHUB_URL, files=["main.py"])
+    OTA = senko.Senko(None, None, url=GITHUB_URL, files=["boot","main.py"])
     if OTA.update():
         print('Updated, rebooting!')
         reset()
