@@ -76,6 +76,7 @@ def do_connect(hostname = False):
 
         ap_strong = ('', -100)
         print('scanning for all access points to determine highest RSSI')
+        # TODO scan with specific ssid probe instead of wildcard?
         for ap in sta_if.scan():
             if ap[0] == config['ssid'].encode():
                 if ap[3] > ap_strong[1]:
@@ -83,8 +84,11 @@ def do_connect(hostname = False):
                     ap_strong = (ap[1], ap[3])
                 else:
                     print("rejecting {} with strength {}".format(ap[1].hex(),ap[3]))
-        # TODO handle "not found"
-        sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
+        # if no APs respond to beacon request, attempt to connect to hidden network
+        if not ap_strong[0]:
+            sta_if.connect(config['ssid'],config['psk'])
+        else:
+            sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
         while not sta_if.isconnected():
             print('.', end = '')
             time.sleep(0.25)
