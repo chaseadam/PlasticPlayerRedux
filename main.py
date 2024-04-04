@@ -88,6 +88,49 @@ def init_peripherals():
     pn532.SAM_configuration()
 
 
+# urldecode for airtable url from HTML form
+# https://forum.micropython.org/viewtopic.php?t=3076#p18183
+_hextobyte_cache = None
+
+# TODO there is another unquote function in spotify library
+def unquote(string):
+    """unquote('abc%20def') -> b'abc def'."""
+    global _hextobyte_cache
+
+    # Note: strings are encoded as UTF-8. This is only an issue if it contains
+    # unescaped non-ASCII characters, which URIs should not.
+    if not string:
+        return b''
+
+    if isinstance(string, str):
+        string = string.encode('utf-8')
+
+    bits = string.split(b'%')
+    if len(bits) == 1:
+        return string
+
+    res = [bits[0]]
+    append = res.append
+
+    # Build cache for hex to char mapping on-the-fly only for codes
+    # that are actually used
+    if _hextobyte_cache is None:
+        _hextobyte_cache = {}
+
+    for item in bits[1:]:
+        try:
+            code = item[:2]
+            char = _hextobyte_cache.get(code)
+            if char is None:
+                char = _hextobyte_cache[code] = bytes([int(code, 16)])
+            append(char)
+            append(item[2:])
+        except KeyError:
+            append(b'%')
+            append(item)
+
+    return b''.join(res)
+
 db = {}
 playing_end = None
 playing_uri = None
@@ -120,6 +163,7 @@ def getRecord(uid):
 
 # TODO make a library out of this, probably compatible with `with ... as` pattern?
 def getNDEFMessageTLV():
+    read_start = time.ticks_ms()
     # assuming last block is 0x2B
     # start at block 0x04 because that is where data starts
     block_position = 4
@@ -133,6 +177,7 @@ def getNDEFMessageTLV():
             # test if empty tag
             if ntag2xx_block == bytearray([0,0,0,0]):
                 # TODO there is another common pattern which may be worth shortcutting [0,0,0,FE]
+                # TODO these are constants available from the upstream library
                 if DEBUG:
                     print("empty block contents, assuming empty")
                 break
@@ -189,25 +234,23 @@ def getNDEFMessageTLV():
             # this will cause "IndexError: bytes index out of range" if passed to ndef
             tlv_NDEF_message_bytes = bytearray()
             break
+    print("done reading in ", time.ticks_diff(read_start, time.ticks_ms()))
     return tlv_NDEF_message_bytes
 
 def getNDEFspotify(ndef_payload):
-    ndef_value = None
+    ndef_values = []
     # This produces a generator, so iterate until we find the record we want
     # TODO handle decoder errors
     ndef_records = ndef.message_decoder(ndef_payload)
     for r in ndef_records:
         # long form URN, but stored as "T": https://nfcpy.readthedocs.io/en/v0.13.6/topics/ndef.html#parsing-ndef
         if r.type == 'urn:nfc:wkt:T':
-            ndef_value = r.text
+            ndef_values.append(r.text)
         elif r.type == 'urn:nfc:wkt:U':
-            ndef_value = r.uri
-        if 'spotify:' in ndef_value:
-            break
-    else:
+            ndef_values.append(r.uri)
+    if not ndef_values:
         print("no usable records found")
-        ndef_value = None
-    return ndef_value
+    return ndef_values
 
 def syncPlayerStatus(client):
     # https://api.spotify.com/v1/me/player
@@ -317,7 +360,7 @@ def run_server():
             airtable = re.search('airtable=([^& ]*)[&]*', line)
             if airtable:
                 print(airtable.group(1))
-                config['airtable'] = airtable.group(1).decode()
+                config['airtable'] = unquote(airtable.group(1).decode()).decode()
                 settings_updated = True
             # update host
             # update port
@@ -346,12 +389,17 @@ def run():
     paused = False
     display_status('Running')
     print("Running")
-    spotify = spotify_client()
+    #import network
+    #sta = network.WLAN(network.STA_IF)
+    #ip = sta.ifconfig()[0]
+    #display.text(ip, 0, 10)
+    spotify = spotify_client(display)
     display_status('NFC Read')
     print("Waiting for RFID/NFC card...")
     # Make LED blue
     np[0] = (0,0,25)
     np.write()
+    uid_last = None
     while True:
         # TODO find a way to interrupt on button press, so don't have to wait for NFC timeout
         # TODO add debouncing or "fire once", but for now, will use HTTP call delay and NFC timeout
@@ -416,6 +464,13 @@ def run():
         if uid is None:
             gc.collect()
             continue
+        elif uid == uid_last:
+            # TODO, this happens if there was a read error, clear out on read error
+            #print("ignoring nfc tag, prevent repeat")
+            #time.sleep(1)
+            continue
+        # begin processing NFC tag info
+        uid_last = uid
         #display_status('Looking up Tag')
         #print("Found card with UID:", [hex(i) for i in uid])
         # output uid in format matching espruino library for input into PlasticPlayer JSON
@@ -426,14 +481,26 @@ def run():
             # TODO try using `with ... as` pattern to help with memory?
             # good candidate for a generator?
             ndef_message_bytes = getNDEFMessageTLV()
+            display.fill(1)
+            display.show()
+
             # Check message contents are not empty. If empty, failed to read or no message found
             while ndef_message_bytes:
-                tag_uri = getNDEFspotify(ndef_message_bytes)
-                if tag_uri:
-                    uri = tag_uri
-                    display_status('Found Spotify NDEF')
+                tag_uris = getNDEFspotify(ndef_message_bytes)
+                if tag_uris:
+                    for tag in tag_uris:
+                        # check if we have a handler
+                        if 'spotify:' in tag:
+                            uri = tag
+                            display_status('Found Spotify NDEF')
+                        elif 'tidal:' in tag:
+                            uri = tag
+                            tidal = True
+                            display_status('Found Tidal NDEF')
+                    # WARNING: This will skip over DB if there are *any* URIs in tag
                     break
             else:
+                display_status('Search in DB')
                 # check airtable if url in config
                 if 'airtable' in config.keys():
                     record = getRecord(str([x for x in uid] ))
@@ -446,48 +513,60 @@ def run():
             # memory allocation errors if we don't collect here
             gc.collect()
 
-            # WARNING: esp32 specific and probably doesn't help with speed of TLS setup?
-            if playing_end is None:
-                # TODO option to always stomp on non-player controlled activity to speed up play?
-                syncPlayerStatus(spotify)
-            if playing_uri == uri:
-                display_status(playing_title)
-                # TODO use this logic in NFC read loop to update screen with playing track
-                playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
-                # this may not be exact, possibly add a gap or "resync"?
-                if playing_remaining > 0:
-                    print("we think this uri is currently playing with time remaining", playing_remaining )
-                    # prevent fast cycling if there is a lot of time left
-                    if playing_remaining > 10000:
-                        time.sleep_ms(5000)
-                    continue
-            #else:
-            #    print(playing_uri)
-            #    print(record['uri'])
-            print("Play: ", uri)
-            # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
-            ticks_start = time.ticks_ms()
-            # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
-            display_status('Sending to Spotify')
-            # Make LED green
-            np[0] = (0,25,0)
-            np.write()
-            if 'track' in uri:
-                spotify.play(uris=[uri])
+            if 'tidal:' in uri:
+                # note LMS "preserves" the shuffle state" from previous setting
+                #TODO
+                post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
+                req = requests.post("http://192.168.5.20:9002/jsonrpc.js", data = post_data)
+                print("request sent to LMS")
+                ## for now, just say it was sent and clear, no status readout
+                display_status('Sent to Squeezebox AC:22')
+                time.sleep(3)
+                display_status("")
+
+            # otherwise we are spotify
             else:
-                spotify.play(context_uri=uri)
-            # clear end time to trigger syncPlayerStatus on next tag found if needed
-            # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
-            playing_end = None
-            print("Spotify `play` API call time: ", time.ticks_diff(time.ticks_ms(), ticks_start))
-            # screen updates when we sync, so sync now
-            # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
-            # TODO replace this sleep
-            # without this sleep, we show the previously playing track
-            time.sleep_ms(2000)
-            gc.collect()
-            # making this call immediately causes memory allocation error, so we added gc.collect() before
-            syncPlayerStatus(spotify)
+                if playing_end is None:
+                    # TODO option to always stomp on non-player controlled activity to speed up play?
+                    syncPlayerStatus(spotify)
+                if playing_uri == uri:
+                    display_status(playing_title)
+                    # TODO use this logic in NFC read loop to update screen with playing track
+                    playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
+                    # this may not be exact, possibly add a gap or "resync"?
+                    if playing_remaining > 0:
+                        print("we think this uri is currently playing with time remaining", playing_remaining )
+                        # prevent fast cycling if there is a lot of time left
+                        if playing_remaining > 10000:
+                            time.sleep_ms(5000)
+                        continue
+                #else:
+                #    print(playing_uri)
+                #    print(record['uri'])
+                print("Play: ", uri)
+                # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
+                ticks_start = time.ticks_ms()
+                # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
+                display_status('Sending to Spotify')
+                # Make LED green
+                np[0] = (0,25,0)
+                np.write()
+                if 'track' in uri:
+                    spotify.play(uris=[uri])
+                else:
+                    spotify.play(context_uri=uri)
+                # clear end time to trigger syncPlayerStatus on next tag found if needed
+                # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
+                playing_end = None
+                print("Spotify `play` API call time: ", time.ticks_diff(time.ticks_ms(), ticks_start))
+                # screen updates when we sync, so sync now
+                # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
+                # TODO replace this sleep
+                # without this sleep, we show the previously playing track
+                time.sleep_ms(2000)
+                gc.collect()
+                # making this call immediately causes memory allocation error, so we added gc.collect() before
+                syncPlayerStatus(spotify)
         # occasional timeouts with ECONNABORTED, and HOSTUNREACHABLE, probably shout reset if that happens
         except OSError as e:
             print('Error: {}, Reason: {}'.format(e, "null"))
