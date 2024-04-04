@@ -23,7 +23,6 @@ from esp32 import Partition
 from machine import reset
 import errno
 
-import senko
 
 currentPartition = Partition(Partition.RUNNING)
 nextPartition = currentPartition.get_next_update()
@@ -305,19 +304,63 @@ def web_page():
     <form action="/" method="get">
         <label for="airtable">airtable</label>
         <input type="text" name="airtable" id="airtable">
-</br>
+        </br>
         <label for="update_host">update_host</label>
         <input type="text" name="update_host" id="update_host">
-</br>
+        </br>
         <label for="update_port">update_port</label>
         <input type="text" name="update_port" id="update_port">
         </br>
+        For Tidal Only:
+        </br>
+        <label for="update_port">Lyrion host</label>
+        <input type="text" name="lyrion_host" id="lyrion_host">
+        </br>
+        <label for="update_port">Lyrion port</label>
+        <input type="text" name="lyrion_port" id="lyrion_port">
+        </br>
+        <label for="update_port">squeezebox</label>
+        <input type="text" name="squeezebox" id="squeezebox">
+        </br>
         <button type="submit">submit</button>
     </form>
+    Careful with these: 
     <a href="/?otafirmware=True">OTA Firmware</a>
     <a href="/?otacode=True">OTA Code</a>
     </body></html>"""
     return html
+
+# https://forum.micropython.org/viewtopic.php?t=3076#p54352
+def unquote(string):
+    """unquote('abc%20def') -> b'abc def'.
+
+    Note: if the input is a str instance it is encoded as UTF-8.
+    This is only an issue if it contains unescaped non-ASCII characters,
+    which URIs should not.
+    """
+    if not string:
+        return b''
+
+    if isinstance(string, str):
+        string = string.encode('utf-8')
+
+    bits = string.split(b'%')
+    if len(bits) == 1:
+        return string
+
+    res = bytearray(bits[0])
+    append = res.append
+    extend = res.extend
+
+    for item in bits[1:]:
+        try:
+            append(int(item[:2], 16))
+            extend(item[2:])
+        except KeyError:
+            append(b'%')
+            extend(item)
+
+    return bytes(res)
 
 def run_server():
     # config page
@@ -345,6 +388,7 @@ def run_server():
         cl_file = cl.makefile('rwb', 0)
         settings_updated = False
         while True:
+            # Are there multiple "lines"? How do they split?
             # read till end line by line until end and throw away
             line = cl_file.readline()
             if "otafirmware=True" in line:
@@ -365,12 +409,21 @@ def run_server():
             # update host
             # update port
             update_host = re.search('update_host=([^& ]*)&*', line)
-            update_port = re.search('update_port=([^& ]*)&*', line)
             if update_host:
                 settings_updated = True
+                update_port = re.search('update_port=([^& ]*)&*', line)
                 # WARNING: assume we were passed port as well
                 config['update_host'] = update_host.group(1)
                 config['update_port'] = update_port.group(1)
+            lyrion_host = re.search('lyrion_host=([^& ]*)&*', line)
+            if lyrion_host:
+                lyrion_port = re.search('lyrion_port=([^& ]*)&*', line)
+                # WARNING: assume we were passed port as well
+                # WARNING: may have to URL decode this
+                squeezebox = re.search('squeezebox=([^& ]*)&*', line)
+                config['lyrion_host'] = lyrion_host.group(1)
+                config['lyrion_port'] = lyrion_port.group(1)
+                config['squeezebox'] = unquote(squeezebox.group(1))
             if not line or line == b'\r\n':
                 break
         response = web_page()
@@ -389,12 +442,15 @@ def run():
     paused = False
     display_status('Running')
     print("Running")
-    #import network
-    #sta = network.WLAN(network.STA_IF)
-    #ip = sta.ifconfig()[0]
-    #display.text(ip, 0, 10)
+    import network
+    sta = network.WLAN(network.STA_IF)
+    ip = sta.ifconfig()[0]
     spotify = spotify_client(display)
     display_status('NFC Read')
+    if "squeezebox" in config:
+        display.text('lms:{}'.format(config["squeezebox"].replace(":","")), 0, 10)
+    display.text(ip, 0, 20)
+    display.show()
     print("Waiting for RFID/NFC card...")
     # Make LED blue
     np[0] = (0,0,25)
@@ -517,11 +573,11 @@ def run():
                 # note LMS "preserves" the shuffle state" from previous setting
                 #TODO
                 post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
-                req = requests.post("http://192.168.5.20:9002/jsonrpc.js", data = post_data)
+                req = requests.post(f"http://{config['lyrion_host']}:{config['lyrion_port']}/jsonrpc.js", data = post_data)
                 print("request sent to LMS")
                 ## for now, just say it was sent and clear, no status readout
-                display_status('Sent to Squeezebox AC:22')
-                time.sleep(3)
+                display_status('Sent to Squeezebox')
+                time.sleep_ms(3000)
                 display_status("")
 
             # otherwise we are spotify
