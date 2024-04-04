@@ -17,7 +17,7 @@ import ndef
 
 import ssd1306
 
-import urequests as requests
+import requestspre as requests
 
 from esp32 import Partition
 from machine import reset
