@@ -11,6 +11,11 @@ creds = pickle.load(dbfile)
 session = tidalapi.Session()
 print(session.load_oauth_session(*creds))
 
+#from pathlib import Path
+#session_file1 = Path("tidal-session-oauth.json")
+## Load session from file; create a new OAuth session if necessary
+#session.login_session_file(session_file1)
+
 user = session.user
 
 tags = []

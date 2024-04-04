@@ -41,6 +41,7 @@ def do_connect(hostname = False):
     import network
     # network config missing
     if not 'ssid' in config.keys():
+        # Does this support manual adding of "hidden" networks?
         # start wifi manager library to get network config
         import wifimgr
         wlan = wifimgr.get_connection()
