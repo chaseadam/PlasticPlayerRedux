@@ -74,7 +74,8 @@ def init_peripherals():
     print("PN532 init")
     pn532 = PN532_SPI(vspi, cs_pin, debug=DEBUG)
     
-    pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
+    pin = Pin(26, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
+    #pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
     np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
     np[0] = (25, 25, 25) # set the first pixel to white
     np.write()              # write data to all pixels
@@ -144,7 +145,8 @@ def getDB():
     # TypeError: unsupported type for __hash__: 'list'
     # Example entry
     #db[str('[7,6,121,177,154,116,77]')]      = {"uri": "spotify:album:4q1CvYn7xtCCGT5lzxlWx8", "note": "jaz"}
-    r = requests.get(config['airtable'])
+    headers = {"Authorization": "Bearer {}".format(config['airtable_token'])}
+    r = requests.get(config['airtable'], headers = headers)
     for record in r.json()['records']:
         # TODO errors in handling this input are not handled well
         # WARNING: this reads the table into memory, could cause memory heap issues if too large
@@ -155,7 +157,7 @@ def getDB():
     r.close()
 
 def getRecord(uid):
-    if not db:
+    if not db and config['airtable']:
         getDB()
     print("Searching DB for " + uid)
     return db[uid]
@@ -305,6 +307,9 @@ def web_page():
         <label for="airtable">airtable</label>
         <input type="text" name="airtable" id="airtable">
         </br>
+        <label for="airtable">airtable personal access token</label>
+        <input type="text" name="airtable_token" id="airtable_token">
+        </br>
         <label for="update_host">update_host</label>
         <input type="text" name="update_host" id="update_host">
         </br>
@@ -390,7 +395,14 @@ def run_server():
         while True:
             # Are there multiple "lines"? How do they split?
             # read till end line by line until end and throw away
+            # If any other line has these values (i.e. referrer) then it will execute the config processing again
             line = cl_file.readline()
+            if not line or line == b'\r\n':
+                break
+            print(line)
+            if not "GET" in line:
+                print('skipping non-GET line')
+                continue
             if "otafirmware=True" in line:
                 ota()
             elif "otacode=True" in line:
@@ -402,9 +414,11 @@ def run_server():
             # WARNING: assuming only one param, so no `&` in URL
             # `\s` to remove HTTP request details after URL
             airtable = re.search('airtable=([^& ]*)[&]*', line)
-            if airtable:
-                print(airtable.group(1))
+            # warning: this runs when you leave field empty as it is still passed and matches (but no group?)
+            if airtable.group(1):
                 config['airtable'] = unquote(airtable.group(1).decode()).decode()
+                airtable_token = re.search('airtable_token=([^& ]*)[&]*', line)
+                config['airtable_token'] = unquote(airtable_token.group(1).decode()).decode()
                 settings_updated = True
             # update host
             # update port
@@ -416,7 +430,7 @@ def run_server():
                 config['update_host'] = update_host.group(1)
                 config['update_port'] = update_port.group(1)
             lyrion_host = re.search('lyrion_host=([^& ]*)&*', line)
-            if lyrion_host:
+            if lyrion_host.group(1):
                 lyrion_port = re.search('lyrion_port=([^& ]*)&*', line)
                 # WARNING: assume we were passed port as well
                 # WARNING: may have to URL decode this
@@ -424,8 +438,6 @@ def run_server():
                 config['lyrion_host'] = lyrion_host.group(1)
                 config['lyrion_port'] = lyrion_port.group(1)
                 config['squeezebox'] = unquote(squeezebox.group(1))
-            if not line or line == b'\r\n':
-                break
         response = web_page()
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         cl.send(response)
@@ -451,6 +463,7 @@ def run():
         display.text('lms:{}'.format(config["squeezebox"].replace(":","")), 0, 10)
     display.text(ip, 0, 20)
     display.show()
+    display.hw_scroll_h()
     print("Waiting for RFID/NFC card...")
     # Make LED blue
     np[0] = (0,0,25)
@@ -570,15 +583,20 @@ def run():
             gc.collect()
 
             if 'tidal:' in uri:
+                np[0] = (0,25,0)
+                np.write()
                 # note LMS "preserves" the shuffle state" from previous setting
                 #TODO
                 post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
                 req = requests.post(f"http://{config['lyrion_host']}:{config['lyrion_port']}/jsonrpc.js", data = post_data)
+                req.close()
                 print("request sent to LMS")
                 ## for now, just say it was sent and clear, no status readout
                 display_status('Sent to Squeezebox')
                 time.sleep_ms(3000)
                 display_status("")
+                np[0] = (25,0,0)
+                np.write()
 
             # otherwise we are spotify
             else:

@@ -102,7 +102,12 @@ def request(
             #context.verify_mode = tls.CERT_NONE
             print("using pre-allocated context")
             s = context.wrap_socket(s, server_hostname=host)
+            print("wrapped")
         s.write(b"%s /%s HTTP/1.0\r\n" % (method, path))
+        print("wrote first http header")
+        # force non-compressed responses to allow "stream" of SSLContext readlines() 
+        if "Accept-Encoding" not in headers:
+            s.write(b"Accept-Encoding: %s\r\n" % 'identity')
         if "Host" not in headers:
             s.write(b"Host: %s\r\n" % host)
         # Iterate over keys to avoid tuple alloc
@@ -132,9 +137,10 @@ def request(
                 s.write("0\r\n\r\n")
             else:
                 s.write(data)
-
+        print("headers done")
+        print("starting read")
         l = s.readline()
-        # print(l)
+        print(l)
         l = l.split(None, 2)
         if len(l) < 2:
             # Invalid response
@@ -144,6 +150,7 @@ def request(
         if len(l) > 2:
             reason = l[2].rstrip()
         while True:
+            print("reading line.")
             l = s.readline()
             if not l or l == b"\r\n":
                 break
