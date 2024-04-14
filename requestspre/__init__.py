@@ -105,7 +105,7 @@ def request(
             print("wrapped")
         s.write(b"%s /%s HTTP/1.0\r\n" % (method, path))
         print("wrote first http header")
-        # force non-compressed responses to allow "stream" of SSLContext readlines() 
+        # force non-compressed responses to allow "stream" of SSLContext readlines()
         if "Accept-Encoding" not in headers:
             s.write(b"Accept-Encoding: %s\r\n" % 'identity')
         if "Host" not in headers:
