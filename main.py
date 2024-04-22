@@ -394,7 +394,8 @@ def run():
         #display.scroll(1, 0)
         # show estimated song progress
         if playing_end:
-            display.rect(0,10,128,10,0,True)
+            # Warning had to remove "true" fill due to old framebuf behavor
+            #display.rect(0,10,128,10,0)
             # TODO this isn't quite accurate enough (+5-10 seconds)
             playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
             # TODO display in seconds or minutes/seconds
@@ -408,7 +409,7 @@ def run():
                 # TODO fade out over time
                 np[0] = (25,0,0)
                 np.write()
-                display.rect(0,10,128,10,0,True)
+                #display.rect(0,10,128,10,0)
                 # TODO reset the device screen to default?
                 display.fill(0)
             display.show()
