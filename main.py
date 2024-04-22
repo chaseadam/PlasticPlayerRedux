@@ -488,7 +488,7 @@ def run():
             # TODO display in seconds or minutes/seconds
             # TODO progress bar
             # TODO display total length number
-            display.text(str(playing_remaining), 0, 10)
+            #display.text(str(playing_remaining), 0, 10)
             # is track over?
             if playing_remaining < 0:
                 playing_end = False
@@ -542,7 +542,8 @@ def run():
                             tidal = True
                             display_status('Found Tidal NDEF')
                             break
-                print("no known URIs found")
+                    if not uri:
+                        print("no known URIs found")
             if not uri:
                 print("searching DB")
                 display_status('Search in DB')
@@ -580,6 +581,8 @@ def run():
                     if playing_end is None:
                         # TODO option to always stomp on non-player controlled activity to speed up play?
                         syncPlayerStatus(spotify)
+                    print(uri)
+
                     if playing_uri == uri:
                         display_status(playing_title)
                         # TODO use this logic in NFC read loop to update screen with playing track
