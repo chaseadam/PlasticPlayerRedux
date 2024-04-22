@@ -79,10 +79,12 @@ def do_connect(hostname = False):
         for ap in sta_if.scan():
             if ap[0] == config['ssid'].encode():
                 if ap[3] > ap_strong[1]:
-                    print("found {} with strength {}".format(ap[1].hex(),ap[3]))
+                    # Warning .hex() not available in micropython 1.19
+                    # https://stackoverflow.com/a/55060003
+                    print("found {} with strength {}".format(''.join(['{:02x}'.format(b) for b in ap[1]]),ap[3]))
                     ap_strong = (ap[1], ap[3])
                 else:
-                    print("rejecting {} with strength {}".format(ap[1].hex(),ap[3]))
+                    print("rejecting {} with strength {}".format(''.join(['{:02x}'.format(b) for b in ap[1]]),ap[3]))
         # TODO handle "not found"
         sta_if.connect(config['ssid'],config['psk'], bssid=ap_strong[0])
         while not sta_if.isconnected():
