@@ -415,11 +415,13 @@ def run_server():
             # `\s` to remove HTTP request details after URL
             airtable = re.search('airtable=([^& ]*)[&]*', line)
             # warning: this runs when you leave field empty as it is still passed and matches (but no group?)
-            if airtable.group(1):
-                config['airtable'] = unquote(airtable.group(1).decode()).decode()
-                airtable_token = re.search('airtable_token=([^& ]*)[&]*', line)
-                config['airtable_token'] = unquote(airtable_token.group(1).decode()).decode()
-                settings_updated = True
+            # this didn't fail on earlier micropython versions, but does now, so check if airtable is true?
+            if airtable:
+                if airtable.group(1):
+                    config['airtable'] = unquote(airtable.group(1).decode()).decode()
+                    airtable_token = re.search('airtable_token=([^& ]*)[&]*', line)
+                    config['airtable_token'] = unquote(airtable_token.group(1).decode()).decode()
+                    settings_updated = True
             # update host
             # update port
             update_host = re.search('update_host=([^& ]*)&*', line)
@@ -576,6 +578,7 @@ def run():
                     uri = record['uri']
                     display_status('Found Tag in DB')
                 else:
+                    #WARNING: this will trigger failure due to no `uri` value
                     print('no uri payload and no db configured')
                     # TODO show URI ID?
                     continue
