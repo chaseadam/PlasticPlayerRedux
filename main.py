@@ -427,7 +427,11 @@ def run():
     import network
     sta = network.WLAN(network.STA_IF)
     ip = sta.ifconfig()[0]
-    spotify = spotify_client()
+    # we added display handling to library, but OTA update does not force firmware or library updates yet, so make sure we support older library
+    try:
+        spotify = spotify_client(display=display)
+    except TypeError:
+        spotify = spotify_client()
     display_status('NFC Read')
     if "squeezebox" in config:
         display.text('lms:{}'.format(config["squeezebox"].replace(":","")), 0, 10)
