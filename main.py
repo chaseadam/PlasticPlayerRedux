@@ -490,14 +490,22 @@ def run():
             # TODO handle local playing context?
             elif not paused:
                 # always immediately send pause command to not delay pausing if needed?
-                spotify.pause()
+                try:
+                    spotify.pause()
+                except SpotifyWebApiError as e:
+                    print('Error: {}, Reason: {}'.format(e, e.reason))
+                    display_status('Spotify Error {}'.format(e))
                 print("pausing")
                 paused = True
             else:
                 # should we resume? (can we tell if we always call pause first?)
                 # play
                 print("resuming")
-                spotify.resume()
+                try:
+                    spotify.resume()
+                except SpotifyWebApiError as e:
+                    print('Error: {}, Reason: {}'.format(e, e.reason))
+                    display_status('Spotify Error {}'.format(e))
                 # reset local state
                 time.sleep_ms(2000)
                 gc.collect()
@@ -506,7 +514,11 @@ def run():
         if not button_b.value():
             print("next song")
             # next
-            spotify.next()
+            try:
+                spotify.next()
+            except SpotifyWebApiError as e:
+                print('Error: {}, Reason: {}'.format(e, e.reason))
+                display_status('Spotify Error {}'.format(e))
             # reset local state
             time.sleep_ms(2000)
             gc.collect()
@@ -643,6 +655,7 @@ def run():
                     # Make LED green
                     np[0] = (0,25,0)
                     np.write()
+                    # These can errror if device is not found
                     if 'track' in uri:
                         spotify.play(uris=[uri])
                     else:
@@ -664,6 +677,7 @@ def run():
             print('Error: {}, Reason: {}'.format(e, "null"))
         except SpotifyWebApiError as e:
             print('Error: {}, Reason: {}'.format(e, e.reason))
+            display_status('Spotify Error {}'.format(e))
         except KeyError as e:
             # show error and tag ID so it can be used in airtable DB
             print('Tag not found in loaded DB')
