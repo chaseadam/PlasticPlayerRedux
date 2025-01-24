@@ -17,7 +17,7 @@ import ndef
 
 import ssd1306
 
-import requestspre as requests
+import requests
 
 from esp32 import Partition
 from machine import reset
@@ -90,6 +90,7 @@ def init_peripherals():
 
 # urldecode for airtable url from HTML form
 # https://forum.micropython.org/viewtopic.php?t=3076#p18183
+# https://forum.micropython.org/viewtopic.php?t=3076#p54352
 _hextobyte_cache = None
 
 # TODO there is another unquote function in spotify library
@@ -329,7 +330,7 @@ def web_page():
         </br>
         <button type="submit">submit</button>
     </form>
-    Careful with these: 
+    Careful with these:
     <a href="/?otafirmware=True">OTA Firmware</a>
     <a href="/?otacode=True">OTA Code</a>
     </body></html>"""
@@ -432,14 +433,15 @@ def run_server():
                 config['update_host'] = update_host.group(1)
                 config['update_port'] = update_port.group(1)
             lyrion_host = re.search('lyrion_host=([^& ]*)&*', line)
-            if lyrion_host.group(1):
-                lyrion_port = re.search('lyrion_port=([^& ]*)&*', line)
-                # WARNING: assume we were passed port as well
-                # WARNING: may have to URL decode this
-                squeezebox = re.search('squeezebox=([^& ]*)&*', line)
-                config['lyrion_host'] = lyrion_host.group(1)
-                config['lyrion_port'] = lyrion_port.group(1)
-                config['squeezebox'] = unquote(squeezebox.group(1))
+            if lyrion_host:
+                if lyrion_host.group(1):
+                    lyrion_port = re.search('lyrion_port=([^& ]*)&*', line)
+                    # WARNING: assume we were passed port as well
+                    # WARNING: may have to URL decode this
+                    squeezebox = re.search('squeezebox=([^& ]*)&*', line)
+                    config['lyrion_host'] = lyrion_host.group(1)
+                    config['lyrion_port'] = lyrion_port.group(1)
+                    config['squeezebox'] = unquote(squeezebox.group(1))
         response = web_page()
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         cl.send(response)
@@ -459,7 +461,11 @@ def run():
     import network
     sta = network.WLAN(network.STA_IF)
     ip = sta.ifconfig()[0]
-    spotify = spotify_client(display)
+    # we added display handling to library, but OTA update does not force firmware or library updates yet, so make sure we support older library
+    try:
+        spotify = spotify_client(display=display)
+    except TypeError:
+        spotify = spotify_client()
     display_status('NFC Read')
     if "squeezebox" in config:
         display.text('lms:{}'.format(config["squeezebox"].replace(":","")), 0, 10)
@@ -478,6 +484,7 @@ def run():
             # check if both buttons pressed, start ota update
             # TODO add more intentional confirmation for OTA update
             if not button_b.value():
+                print("config server")
                 run_server()
                 display_status('NFC Read')
             # TODO handle local playing context?
@@ -513,13 +520,13 @@ def run():
         #display.scroll(1, 0)
         # show estimated song progress
         if playing_end:
-            display.rect(0,10,128,10,0,True)
+            #display.rect(0,10,128,10,0,True)
             # TODO this isn't quite accurate enough (+5-10 seconds)
             playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
             # TODO display in seconds or minutes/seconds
             # TODO progress bar
             # TODO display total length number
-            display.text(str(playing_remaining), 0, 10)
+            #display.text(str(playing_remaining), 0, 10)
             # is track over?
             if playing_remaining < 0:
                 playing_end = False
@@ -527,7 +534,7 @@ def run():
                 # TODO fade out over time
                 np[0] = (25,0,0)
                 np.write()
-                display.rect(0,10,128,10,0,True)
+                #display.rect(0,10,128,10,0,True)
                 # TODO reset the device screen to default?
                 display.fill(0)
             display.show()
@@ -556,21 +563,27 @@ def run():
             display.show()
 
             # Check message contents are not empty. If empty, failed to read or no message found
-            while ndef_message_bytes:
+            uri = None
+            # why was this a while? it made it hard to break out of when found a tag
+            if ndef_message_bytes:
                 tag_uris = getNDEFspotify(ndef_message_bytes)
                 if tag_uris:
                     for tag in tag_uris:
+                        print("processing tag")
                         # check if we have a handler
                         if 'spotify:' in tag:
                             uri = tag
                             display_status('Found Spotify NDEF')
+                            break
                         elif 'tidal:' in tag:
                             uri = tag
                             tidal = True
                             display_status('Found Tidal NDEF')
-                    # WARNING: This will skip over DB if there are *any* URIs in tag
-                    break
-            else:
+                            break
+                    if not uri:
+                        print("no known URIs found")
+            if not uri:
+                print("searching DB")
                 display_status('Search in DB')
                 # check airtable if url in config
                 if 'airtable' in config.keys():
@@ -584,66 +597,68 @@ def run():
                     continue
             # memory allocation errors if we don't collect here
             gc.collect()
+            if uri:
+                if 'tidal:' in uri:
+                    np[0] = (0,25,0)
+                    np.write()
+                    # note LMS "preserves" the shuffle state" from previous setting
+                    #TODO
+                    post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
+                    req = requests.post(f"http://{config['lyrion_host']}:{config['lyrion_port']}/jsonrpc.js", data = post_data)
+                    req.close()
+                    print("request sent to LMS")
+                    ## for now, just say it was sent and clear, no status readout
+                    display_status('Sent to Squeezebox')
+                    time.sleep_ms(3000)
+                    display_status("")
+                    np[0] = (25,0,0)
+                    np.write()
 
-            if 'tidal:' in uri:
-                np[0] = (0,25,0)
-                np.write()
-                # note LMS "preserves" the shuffle state" from previous setting
-                #TODO
-                post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
-                req = requests.post(f"http://{config['lyrion_host']}:{config['lyrion_port']}/jsonrpc.js", data = post_data)
-                req.close()
-                print("request sent to LMS")
-                ## for now, just say it was sent and clear, no status readout
-                display_status('Sent to Squeezebox')
-                time.sleep_ms(3000)
-                display_status("")
-                np[0] = (25,0,0)
-                np.write()
-
-            # otherwise we are spotify
-            else:
-                if playing_end is None:
-                    # TODO option to always stomp on non-player controlled activity to speed up play?
-                    syncPlayerStatus(spotify)
-                if playing_uri == uri:
-                    display_status(playing_title)
-                    # TODO use this logic in NFC read loop to update screen with playing track
-                    playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
-                    # this may not be exact, possibly add a gap or "resync"?
-                    if playing_remaining > 0:
-                        print("we think this uri is currently playing with time remaining", playing_remaining )
-                        # prevent fast cycling if there is a lot of time left
-                        if playing_remaining > 10000:
-                            time.sleep_ms(5000)
-                        continue
-                #else:
-                #    print(playing_uri)
-                #    print(record['uri'])
-                print("Play: ", uri)
-                # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
-                ticks_start = time.ticks_ms()
-                # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
-                display_status('Sending to Spotify')
-                # Make LED green
-                np[0] = (0,25,0)
-                np.write()
-                if 'track' in uri:
-                    spotify.play(uris=[uri])
+                # otherwise we are spotify
                 else:
-                    spotify.play(context_uri=uri)
-                # clear end time to trigger syncPlayerStatus on next tag found if needed
-                # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
-                playing_end = None
-                print("Spotify `play` API call time: ", time.ticks_diff(time.ticks_ms(), ticks_start))
-                # screen updates when we sync, so sync now
-                # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
-                # TODO replace this sleep
-                # without this sleep, we show the previously playing track
-                time.sleep_ms(2000)
-                gc.collect()
-                # making this call immediately causes memory allocation error, so we added gc.collect() before
-                syncPlayerStatus(spotify)
+                    if playing_end is None:
+                        # TODO option to always stomp on non-player controlled activity to speed up play?
+                        syncPlayerStatus(spotify)
+                    print(uri)
+
+                    if playing_uri == uri:
+                        display_status(playing_title)
+                        # TODO use this logic in NFC read loop to update screen with playing track
+                        playing_remaining = time.ticks_diff(playing_end, time.ticks_ms())
+                        # this may not be exact, possibly add a gap or "resync"?
+                        if playing_remaining > 0:
+                            print("we think this uri is currently playing with time remaining", playing_remaining )
+                            # prevent fast cycling if there is a lot of time left
+                            if playing_remaining > 10000:
+                                time.sleep_ms(5000)
+                            continue
+                    #else:
+                    #    print(playing_uri)
+                    #    print(record['uri'])
+                    print("Play: ", uri)
+                    # WARNING: will not "start" playing a non-playing webplayer (on first load only, will unpause previously playing webplayer) possibly bug in web player
+                    ticks_start = time.ticks_ms()
+                    # one call for "context" uri (album, playlist) and different for "non-context" (e.g. track)
+                    display_status('Sending to Spotify')
+                    # Make LED green
+                    np[0] = (0,25,0)
+                    np.write()
+                    if 'track' in uri:
+                        spotify.play(uris=[uri])
+                    else:
+                        spotify.play(context_uri=uri)
+                    # clear end time to trigger syncPlayerStatus on next tag found if needed
+                    # TODO add some small "defaults" to playing_end (i.e. assume all songs are at least 10 seconds)
+                    playing_end = None
+                    print("Spotify `play` API call time: ", time.ticks_diff(time.ticks_ms(), ticks_start))
+                    # screen updates when we sync, so sync now
+                    # this may not be up to date yet. wait or use URI to lookup value (from local cache?)
+                    # TODO replace this sleep
+                    # without this sleep, we show the previously playing track
+                    time.sleep_ms(2000)
+                    gc.collect()
+                    # making this call immediately causes memory allocation error, so we added gc.collect() before
+                    syncPlayerStatus(spotify)
         # occasional timeouts with ECONNABORTED, and HOSTUNREACHABLE, probably shout reset if that happens
         except OSError as e:
             print('Error: {}, Reason: {}'.format(e, "null"))

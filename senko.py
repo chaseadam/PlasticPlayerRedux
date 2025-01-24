@@ -2,7 +2,7 @@
 # GPL-3.0 license
 # modified
 
-import requestspre as urequests
+import urequests
 import gc
 import uhashlib
 
