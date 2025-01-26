@@ -244,6 +244,8 @@ def handle_configure(client, request):
             </html>
         """ % dict(ssid=ssid)
         send_response(client, response)
+        time.sleep(1)
+        wlan_ap.active(False)
         try:
             profiles = read_profiles()
         except OSError:
@@ -310,6 +312,7 @@ def start(port=80):
 
     while True:
         if wlan_sta.isconnected():
+            wlan_ap.active(False)
             return True
 
         client, addr = server_socket.accept()
@@ -321,6 +324,13 @@ def start(port=80):
             try:
                 while "\r\n\r\n" not in request:
                     request += client.recv(512)
+            except OSError:
+                pass
+
+            # Handle form data from Safari on macOS and iOS; it sends \r\n\r\nssid=<ssid>&password=<password>
+            try:
+                request += client.recv(1024)
+                print("Received form data after \\r\\n\\r\\n(i.e. from Safari on macOS or iOS)")
             except OSError:
                 pass
 
