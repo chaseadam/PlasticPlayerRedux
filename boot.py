@@ -134,7 +134,8 @@ if 'oauth-staged' in os.listdir():
 do_connect(hostname=hostname)
 # clear screen
 #print("\033c")
-gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+# possibly the cause of the MBEDTLS_ERR_SSL_CONN_EOF? https://stackoverflow.com/questions/78436064/micropython-v1-22-2-on-raspberry-pi-pico-w-with-rp2040-mbedtls-err-ssl-conn-eof
+#gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 if 'ota_code' in config:
     import micropython
     import senko
