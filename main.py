@@ -47,8 +47,10 @@ DEBUG = False
 display = None
 pn532 = None
 np = None
+vspi = None
 def init_display():
     global display
+    global vspi
     # oled
     dc = Pin(17, mode=Pin.OUT)    # data/command
     rst = Pin(16, mode=Pin.OUT)   # reset
@@ -68,6 +70,7 @@ def init_display():
 def init_peripherals():
     global pn532
     global np
+    global vspi
 
     # for RFID
     cs_pin = Pin(5, mode=Pin.OUT, value=1)
