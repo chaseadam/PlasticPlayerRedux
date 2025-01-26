@@ -47,43 +47,44 @@ DEBUG = False
 display = None
 pn532 = None
 np = None
-def init_peripherals():
+def init_display():
     global display
-    global pn532
-    global np
-
-    # for PN532 
-    cs_pin = Pin(5, mode=Pin.OUT, value=1)
-    
     # oled
     dc = Pin(17, mode=Pin.OUT)    # data/command
     rst = Pin(16, mode=Pin.OUT)   # reset
     cs = Pin(4, mode=Pin.OUT, value=1)   # chip select, some modules do not have a pin for this
-    
+
     # for ESP32
     vspi = SPI(2, baudrate=1000000, polarity=0, phase=0, bits=8, firstbit=0, sck=Pin(18), mosi=Pin(23), miso=Pin(19))
-    
+
     # NOTE: this library assumes it can "init" the spi bus with 10 * 1024 * 1024 rate, commented this out as had some difficulty with 10MHz and PN532 on same SPI bus
     # no responses from PN532 after loading ssd1306.SSD1306_SPI() because it messes with the "rate" of the SPI bus
     display = ssd1306.SSD1306_SPI(128, 32, vspi, dc, rst, cs)
-    
+
     display.fill(0)
     display.text('booting', 0 , 0)
     display.show()
 
+def init_peripherals():
+    global pn532
+    global np
+
+    # for RFID
+    cs_pin = Pin(5, mode=Pin.OUT, value=1)
+
     print("PN532 init")
     pn532 = PN532_SPI(vspi, cs_pin, debug=DEBUG)
-    
+
     pin = Pin(26, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
     #pin = Pin(27, Pin.OUT)   # set GPIO0 to output to drive NeoPixels
     np = NeoPixel(pin, 1)   # create NeoPixel driver on GPIO0 for 8 pixels
     np[0] = (25, 25, 25) # set the first pixel to white
     np.write()              # write data to all pixels
     #r, g, b = np[0]         # get first pixel colour
-    
+
     ic, ver, rev, support = pn532.firmware_version
     print("Found PN532 with firmware version: {0}.{1}".format(ver, rev))
-    
+
     # Configure PN532 to communicate with MiFare cards
     pn532.SAM_configuration()
 
@@ -466,6 +467,7 @@ def run():
         spotify = spotify_client(display=display)
     except TypeError:
         spotify = spotify_client()
+    init_peripherals()
     display_status('NFC Read')
     if "squeezebox" in config:
         display.text('lms:{}'.format(config["squeezebox"].replace(":","")), 0, 10)
@@ -767,7 +769,7 @@ def main():
     # Check OAuth stage to determine which mDNS hostname to use
     # clear screen
     #print("\033c")
-    init_peripherals()
+    init_display()
     run()
 
 if __name__ == '__main__':
