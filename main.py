@@ -465,6 +465,7 @@ def run():
     import network
     sta = network.WLAN(network.STA_IF)
     ip = sta.ifconfig()[0]
+    # TODO abstract the "player" to allow specific configuration and actions of the desired player (i.e. Spotify vs Lyrion)
     # we added display handling to library, but OTA update does not force firmware or library updates yet, so make sure we support older library
     try:
         spotify = spotify_client(display=display)
@@ -630,7 +631,6 @@ def run():
                     display_status("")
                     np[0] = (25,0,0)
                     np.write()
-
                 # otherwise we are spotify
                 else:
                     if playing_end is None:
