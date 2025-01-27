@@ -248,6 +248,7 @@ def getNDEFspotify(ndef_payload):
     # This produces a generator, so iterate until we find the record we want
     # TODO handle decoder errors
     ndef_records = ndef.message_decoder(ndef_payload)
+    # we only process Text and URL records
     for r in ndef_records:
         # long form URN, but stored as "T": https://nfcpy.readthedocs.io/en/v0.13.6/topics/ndef.html#parsing-ndef
         if r.type == 'urn:nfc:wkt:T':
@@ -589,11 +590,12 @@ def run():
                     for tag in tag_uris:
                         print("processing tag")
                         # check if we have a handler
-                        if 'spotify:' in tag:
+                        if tag.startswith('spotify:'):
                             uri = tag
                             display_status('Found Spotify NDEF')
                             break
-                        elif 'tidal:' in tag:
+                        # Note: we can use tidal "scheme" or full listen.tidal.com URI
+                        elif 'tidal' in tag:
                             uri = tag
                             tidal = True
                             display_status('Found Tidal NDEF')
@@ -616,12 +618,16 @@ def run():
             # memory allocation errors if we don't collect here
             gc.collect()
             if uri:
-                if 'tidal:' in uri:
+                if 'tidal' in uri:
                     np[0] = (0,25,0)
                     np.write()
                     # note LMS "preserves" the shuffle state" from previous setting
-                    #TODO
-                    post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
+                    #check for full tidal uri or scheme
+                    if uri.startswith('tidal:'):
+                        post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
+                    else:
+                        # pass the full URI for Albums and playlists
+                        post_data = f'{{"id":1,"method":"slim.request","params":["{config['squeezebox']}",["playlist","play","{uri}"]]}}'
                     req = requests.post(f"http://{config['lyrion_host']}:{config['lyrion_port']}/jsonrpc.js", data = post_data)
                     req.close()
                     print("request sent to LMS")
