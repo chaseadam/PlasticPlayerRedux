@@ -1,8 +1,17 @@
 
 ## Features
-### Tags
-* URI stored in NFC tag
-* Airtable "database" of tags to URIs
+
+### Interfaces
+* NFC
+* 2x buttons
+* Optional
+  * OLED 128x32
+  * Neopixel
+
+### NFC Tags
+* Uses NDEF standard
+* URI stored in NFC tag in URI or Text type
+* Airtable "database" of unique tag IDs to URIs
 
 ### Spotify
 at this time, Spotify configuration is required even if you don't use it
