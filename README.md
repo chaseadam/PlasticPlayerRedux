@@ -18,7 +18,7 @@ at this time, Spotify configuration is required even if you don't use it
 
 any spotify URIs will play to spotify
 
-### Tidal (on Lyrion)
+### Tidal (on Lyrion Music Server)
 any tidal URIs play to Lyrion
 
 Configure vi configuration interface
@@ -40,6 +40,15 @@ Note: no screen output, only serial output
 * Power On
 * Release Buttons
 * Press button 0
+### OLED
+On startup:
+* Horizontal scroll to prevent burn in
+* if configured, LMS squeezebox id
+* IP address
+On Tag Read:
+* <>
+On Playback:
+* <>
 
 ## Building
 
